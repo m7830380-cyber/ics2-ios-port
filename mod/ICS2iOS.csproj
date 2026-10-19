@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- iOS runtime additions (touch controls, log, overlay, offline weather, web view backend). Compiled
+       against the patched retail assemblies and shipped next to them as a precompiled plugin. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>ICS2iOS</AssemblyName>
+    <RootNamespace>ICS2iOS</RootNamespace>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <ManagedDir Condition="'$(ManagedDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Internet Cafe Simulator 2\windows_content\Internet Cafe Simulator 2_Data\Managed</ManagedDir>
+    <!-- patched game assemblies + ICS2Shim (tools/build_plugins.py output) -->
+    <GameAsmDir Condition="'$(GameAsmDir)' == ''">$(MSBuildThisFileDirectory)..\..\ics2-ios-private\Plugins</GameAsmDir>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp"><HintPath>$(GameAsmDir)\Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Assembly-CSharp-firstpass"><HintPath>$(GameAsmDir)\Assembly-CSharp-firstpass.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="ICS2Shim"><HintPath>$(GameAsmDir)\ICS2Shim.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(GameAsmDir)\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.TextMeshPro"><HintPath>$(GameAsmDir)\Unity.TextMeshPro.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.Postprocessing.Runtime"><HintPath>$(GameAsmDir)\Unity.Postprocessing.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="FileBasedPrefs"><HintPath>$(GameAsmDir)\FileBasedPrefs.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(ManagedDir)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(ManagedDir)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(ManagedDir)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(ManagedDir)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UIModule"><HintPath>$(ManagedDir)\UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(ManagedDir)\UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AudioModule"><HintPath>$(ManagedDir)\UnityEngine.AudioModule.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>
