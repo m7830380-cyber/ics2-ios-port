@@ -52,6 +52,7 @@ namespace ICS2iOS
                 Log.Info($"virtual input={VInput.Virtual} targetFrameRate={Application.targetFrameRate}");
 
                 InstallPlayerLoopHook();
+                IosWebPlugin.Register();
 
                 var go = new GameObject("ICS2iOS");
                 UnityEngine.Object.DontDestroyOnLoad(go);
@@ -64,6 +65,7 @@ namespace ICS2iOS
                     Log.Info($"scene loaded: '{s.name}' ({mode}) roots={s.rootCount} mem={MemoryMB()}MB");
                     SafeArea.OnSceneLoaded();
                     OfflineWeather.OnSceneLoaded();
+                    WebViewNote.OnSceneLoaded();
                     Platform.ApplyFrameRate();
                 };
                 Application.lowMemory += () => Log.Warn($"iOS low memory warning (mono heap {MemoryMB()}MB)");

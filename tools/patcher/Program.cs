@@ -344,7 +344,7 @@ static class Program
         }
 
         // --- Vuplex: the iOS mod registers its own IWebPlugin through WebPluginFactory -----------
-        foreach (var tn in new[] { "Vuplex.WebView.WebPluginFactory", "Vuplex.WebView.MockWebPlugin", "Vuplex.WebView.MockWebView" })
+        foreach (var tn in new[] { "Vuplex.WebView.WebPluginFactory", "Vuplex.WebView.IWebPlugin", "Vuplex.WebView.MockWebPlugin", "Vuplex.WebView.MockWebView" })
         {
             var t = mod.GetType(tn);
             if (t == null) { c.Fail(tn + " missing"); continue; }
