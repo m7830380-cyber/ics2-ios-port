@@ -47,17 +47,19 @@ def metal_code(msl):
 
 
 def platform_data(tt, blob, plat):
+    """Decompressed program data of one platform, as a list of chunks. Large shaders are split into
+    several LZ4 chunks; only chunk 0 has the entry table, and each entry names its chunk."""
     pi = tt['platforms'].index(plat)
     parts = []
     for j in range(len(tt['offsets'][pi])):
         o, cl, dl = tt['offsets'][pi][j], tt['compressedLengths'][pi][j], tt['decompressedLengths'][pi][j]
         parts.append(lz4.block.decompress(blob[o:o + cl], uncompressed_size=dl))
-    return b''.join(parts)
+    return parts
 
 
-def segment(data, idx):
-    o, l, _ = struct.unpack_from('<iii', data, 4 + 12 * idx)
-    return data[o:o + l]
+def segment(chunks, idx):
+    o, l, c = struct.unpack_from('<iii', chunks[0], 4 + 12 * idx)
+    return chunks[c][o:o + l]
 
 
 def join_segments(segs):

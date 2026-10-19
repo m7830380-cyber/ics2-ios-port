@@ -73,10 +73,12 @@ def plan(tt, sprite_texture=False):
     mips = max(1, tt.get('m_MipCount', 1))
     images = max(1, tt.get('m_ImageCount', 1))
     crunched = fmt in (DXT1_CRUNCHED, DXT5_CRUNCHED)
-    if crunched:
-        mips = 1                          # level 0 only (the iOS player cannot decode crunch for DXT)
     name = tt.get('m_Name', '')
     gif = crunched and max(w, h) <= 512 and name.startswith('frame_')
+    # crunch: only level 0 is decoded; the mip chain is rebuilt from it (except for the GIF frames, UI only)
+    gen_mips = crunched and mips > 1 and not gif
+    if crunched:
+        mips = 1
 
     start = 0
     out_w, out_h = w, h
@@ -91,6 +93,8 @@ def plan(tt, sprite_texture=False):
             resize = (max(1, round(w * s)), max(1, round(h * s)))
             out_w, out_h = resize
     out_mips = mips - start
+    if gen_mips:
+        out_mips = max(out_w, out_h).bit_length()
 
     m = max(out_w, out_h)
     normal = tt.get('m_LightmapFormat') == USAGE_NORMALMAP
@@ -105,7 +109,7 @@ def plan(tt, sprite_texture=False):
     else:
         blk = 6
     return dict(fmt=fmt, w=w, h=h, mips=mips, images=images, start=start, resize=resize,
-                out_w=out_w, out_h=out_h, out_mips=out_mips, block=blk,
+                out_w=out_w, out_h=out_h, out_mips=out_mips, gen_mips=gen_mips, block=blk,
                 quality=QUALITY_FAST if gif else QUALITY, name=name)
 
 
@@ -190,7 +194,13 @@ def encode(p, data):
         dxt = texture2ddecoder.unpack_unity_crunch(bytes(data))
         base = DXT1 if fmt == DXT1_CRUNCHED else DXT5
         rgba = _decode(base, dxt[:src_level_bytes(base, p['w'], p['h'])], p['w'], p['h'])
-        return enc(rgba, p['w'], p['h'])
+        w, h = p['w'], p['h']
+        out = bytearray()
+        for lvl, (mw, mh) in enumerate(mip_sizes(p['out_w'], p['out_h'], p['out_mips'])):
+            if (mw, mh) != (w, h):
+                rgba, w, h = _resize(rgba, w, h, mw, mh), mw, mh
+            out += enc(rgba, w, h)
+        return bytes(out)
 
     sizes = mip_sizes(p['w'], p['h'], p['mips'])
     per_image = sum(src_level_bytes(fmt, mw, mh) for mw, mh in sizes)

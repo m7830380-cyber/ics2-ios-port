@@ -27,7 +27,7 @@ PLAYER_FILES = ['globalgamemanagers', 'globalgamemanagers.assets', 'level0', 'le
                 'sharedassets0.assets', 'sharedassets1.assets', 'Resources/unity_builtin_extra']
 DEFAULT_GAME = r'C:\Program Files (x86)\Steam\steamapps\common\Internet Cafe Simulator 2\windows_content'
 DATA_DIR = 'Internet Cafe Simulator 2_Data'
-CONVERTER_VERSION = '3'   # bump to invalidate the shader cache
+CONVERTER_VERSION = '4'   # bump to invalidate the shader cache
 STREAM_ALIGN = 16
 IN_FLIGHT = 48            # textures being encoded at once (bounds memory)
 
