@@ -22,6 +22,7 @@ namespace ICS2iOS
         {
             Documents = Application.persistentDataPath;
             Log.Init(Documents);
+            IosSettings.Load();
             try
             {
                 if (OnDevice)
@@ -57,6 +58,9 @@ namespace ICS2iOS
                 var go = new GameObject("ICS2iOS");
                 UnityEngine.Object.DontDestroyOnLoad(go);
                 go.AddComponent<DebugOverlay>();
+                go.AddComponent<HudView>();
+                go.AddComponent<SettingsPanel>();
+                IosGraphics.Init();
 
                 SteamOffline.AchievementUnlocked += name => DebugOverlay.Toast("Achievement unlocked");
 
@@ -66,7 +70,7 @@ namespace ICS2iOS
                     SafeArea.OnSceneLoaded();
                     OfflineWeather.OnSceneLoaded();
                     WebViewNote.OnSceneLoaded();
-                    Platform.ApplyFrameRate();
+                    IosGraphics.Apply();
                 };
                 Application.lowMemory += () => Log.Warn($"iOS low memory warning (mono heap {MemoryMB()}MB)");
             }

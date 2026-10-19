@@ -237,6 +237,37 @@ def rebuild_streams(sf, fname, src_dir, dst_dir, sprite_tex, pool, report):
     return converted
 
 
+# Game-controller axes for the iOS layer (mod/Controller.cs). The retail InputManager has none, and the
+# legacy input API can only read joystick axes that are declared here. Axis indices are 0-based
+# (iOS MFi: left stick X/Y = 0/1, right stick X/Y = 2/3, analog triggers L2/R2 = 4/5... see Controller.cs).
+JOY_AXES = [('ICS2 Joy LX', 0), ('ICS2 Joy LY', 1), ('ICS2 Joy RX', 2), ('ICS2 Joy RY', 3),
+            ('ICS2 Joy 5', 4), ('ICS2 Joy 6', 5), ('ICS2 Joy 7', 6), ('ICS2 Joy 8', 7)]
+
+
+def add_joystick_axes(objects):
+    for obj in objects:
+        if obj.type.name != 'InputManager':
+            continue
+        tt = obj.read_typetree()
+        axes = tt['m_Axes']
+        have = {a['m_Name'] for a in axes}
+        template = next(a for a in axes if a['m_Name'] == 'Mouse X')
+        added = 0
+        for name, idx in JOY_AXES:
+            if name in have:
+                continue
+            a = dict(template)
+            a.update({'m_Name': name, 'descriptiveName': '', 'descriptiveNegativeName': '', 'negativeButton': '',
+                      'positiveButton': '', 'altNegativeButton': '', 'altPositiveButton': '', 'gravity': 0.0,
+                      'dead': 0.0, 'sensitivity': 1.0, 'snap': False, 'invert': False, 'type': 2, 'axis': idx,
+                      'joyNum': 0})
+            axes.append(a)
+            added += 1
+        obj.save_typetree(tt)
+        return added
+    return 0
+
+
 def process_player_file(f, data_dir, out_data, cache_dir, work_dir, sprite_tex, pool):
     report = {}
     src = os.path.join(data_dir, f)
@@ -244,6 +275,8 @@ def process_player_file(f, data_dir, out_data, cache_dir, work_dir, sprite_tex, 
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     env = UnityPy.load(src)
     sf = list(env.files.values())[0]
+    if f == 'globalgamemanagers':
+        report['joystick_axes_added'] = add_joystick_axes(sf.objects.values())
     report['shaders_converted'] = convert_shaders_in(sf.objects.values(), cache_dir, work_dir, report)
     report['textures'] = rebuild_streams(sf, os.path.basename(f), os.path.dirname(src), os.path.dirname(dst),
                                          sprite_tex, pool, report)

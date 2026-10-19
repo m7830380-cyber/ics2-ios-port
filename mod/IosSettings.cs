@@ -1,0 +1,86 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using UnityEngine;
+
+namespace ICS2iOS
+{
+    // Settings of the iOS layer (touch controls, graphics), kept as key=value lines in
+    // Documents/ICS2iOS-settings.txt next to the game's own settings and saves.
+    public static class IosSettings
+    {
+        public static float LookSensitivity = 1f;   // multiplier on top of the game's own mouse sensitivity
+        public static float HudOpacity = 0.45f;
+        public static float HudScale = 1f;
+        public static bool HudHidden;
+        public static bool InvertLook;
+        public static int FrameRate = 60;           // 30 or 60
+        public static float RenderScale = 1f;       // 0.5 .. 1 of the native resolution
+        public static int Quality = 1;              // 0 low, 1 medium, 2 high (shadows, post-processing)
+        public static bool RealWeather;             // off by default: live weather would send the IP address to a weather service
+
+        static string Path => System.IO.Path.Combine(Application.persistentDataPath, "ICS2iOS-settings.txt");
+
+        public static event Action Changed;
+
+        public static void Load()
+        {
+            try
+            {
+                if (!File.Exists(Path)) return;
+                var d = new Dictionary<string, string>();
+                foreach (var line in File.ReadAllLines(Path))
+                {
+                    int i = line.IndexOf('=');
+                    if (i > 0) d[line.Substring(0, i).Trim()] = line.Substring(i + 1).Trim();
+                }
+                LookSensitivity = F(d, "look", LookSensitivity, 0.1f, 5f);
+                HudOpacity = F(d, "hud.opacity", HudOpacity, 0.1f, 1f);
+                HudScale = F(d, "hud.scale", HudScale, 0.6f, 1.6f);
+                HudHidden = B(d, "hud.hidden", HudHidden);
+                InvertLook = B(d, "look.invert", InvertLook);
+                FrameRate = (int)F(d, "fps", FrameRate, 30, 60) >= 45 ? 60 : 30;
+                RenderScale = F(d, "render.scale", RenderScale, 0.5f, 1f);
+                Quality = (int)F(d, "quality", Quality, 0, 2);
+                RealWeather = B(d, "weather.real", RealWeather);
+            }
+            catch (Exception e)
+            {
+                Log.Warn("settings: cannot read: " + e.Message);
+            }
+        }
+
+        public static void Save()
+        {
+            try
+            {
+                var ci = CultureInfo.InvariantCulture;
+                File.WriteAllLines(Path, new[]
+                {
+                    "look=" + LookSensitivity.ToString(ci),
+                    "look.invert=" + InvertLook,
+                    "hud.opacity=" + HudOpacity.ToString(ci),
+                    "hud.scale=" + HudScale.ToString(ci),
+                    "hud.hidden=" + HudHidden,
+                    "fps=" + FrameRate,
+                    "render.scale=" + RenderScale.ToString(ci),
+                    "quality=" + Quality,
+                    "weather.real=" + RealWeather,
+                });
+            }
+            catch (Exception e)
+            {
+                Log.Warn("settings: cannot write: " + e.Message);
+            }
+            try { Changed?.Invoke(); } catch (Exception e) { Log.Error("settings changed handler: " + e); }
+        }
+
+        static float F(Dictionary<string, string> d, string k, float def, float min, float max) =>
+            d.TryGetValue(k, out var s) && float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out float v)
+                ? Mathf.Clamp(v, min, max) : def;
+
+        static bool B(Dictionary<string, string> d, string k, bool def) =>
+            d.TryGetValue(k, out var s) && bool.TryParse(s, out bool v) ? v : def;
+    }
+}
