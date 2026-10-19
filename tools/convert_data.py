@@ -1,29 +1,35 @@
-"""Convert retail People Playground (Windows) data so the iOS shell player can load it.
+"""Convert retail Internet Cafe Simulator 2 (Windows) data so the iOS shell player can load it.
 
-  python tools/convert_data.py [--game "C:/.../People Playground"] [--out work]
+  python tools/convert_data.py [--game ".../Internet Cafe Simulator 2/windows_content"] [--out ../ics2-work]
 
-Produces work/Data/ (goes into the app's Data folder, see package_ipa.py). For every serialized file:
+Produces <out>/Data/ (goes into the app's Data folder, see package_ipa.py). For every serialized file:
   * the target-platform tag is changed from StandaloneWindows64 (19) to iOS (9)
-  * every Shader gets its DX11 programs translated to Metal (convert_shader.py)
-  * every BCn/DXT (and crunched) texture is re-encoded as ASTC 4x4 (transcode_tex.py)
-Audio / meshes / everything else stays as it is.
+  * every Shader gets its DX11 programs translated to Metal (convert_shader.py, cached in <out>/cache)
+  * textures are downscaled / re-encoded as ASTC (transcode_tex.py) and the file's .resS is rebuilt piece by
+    piece: every streamed object (textures, meshes) is copied or re-encoded into a new .resS and its offset
+    rewritten, so the 4.7 GB sharedassets1.assets.resS is never loaded into memory at once
+Audio (.resource) is copied unchanged. The retail install is only read, never modified.
 Nothing produced here may be committed to the public repo - it is derived from the game.
 """
-import argparse, hashlib, json, os, pickle, shutil, sys, time, traceback
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import argparse, hashlib, json, os, pickle, shutil, struct, sys, time, traceback
+from concurrent.futures import ProcessPoolExecutor
+from collections import deque
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import UnityPy
 import convert_shader
 from convert_shader import convert_shader as convert_one
-from transcode_tex import transcode_in
+import transcode_tex as tx
 
+UnityPy.config.FALLBACK_UNITY_VERSION = '2020.2.2f1'
 IOS_PLATFORM = 9
-PLAYER_FILES = ['globalgamemanagers', 'globalgamemanagers.assets', 'level0', 'level1', 'level2', 'resources.assets',
-                'sharedassets0.assets', 'sharedassets1.assets', 'sharedassets2.assets', 'Resources/unity_builtin_extra']
-COPY_WITH = ['.resS', '.resource']
-DEFAULT_GAME = r'C:\Program Files (x86)\Steam\steamapps\common\People Playground'
+PLAYER_FILES = ['globalgamemanagers', 'globalgamemanagers.assets', 'level0', 'level1', 'resources.assets',
+                'sharedassets0.assets', 'sharedassets1.assets', 'Resources/unity_builtin_extra']
+DEFAULT_GAME = r'C:\Program Files (x86)\Steam\steamapps\common\Internet Cafe Simulator 2\windows_content'
+DATA_DIR = 'Internet Cafe Simulator 2_Data'
 CONVERTER_VERSION = '3'   # bump to invalidate the shader cache
+STREAM_ALIGN = 16
+IN_FLIGHT = 48            # textures being encoded at once (bounds memory)
 
 
 def log(*a):
@@ -73,7 +79,13 @@ def convert_shaders_in(objects, cache_dir, work_dir, report):
         else:
             tt['compressedBlob'] = b''
             msgs = []
-            res = convert_one(tt, blob, os.path.join(work_dir, 'hlslcc', key), log=msgs.append)
+            t0 = time.time()
+            try:
+                res = convert_one(tt, blob, os.path.join(work_dir, 'hlslcc', key), log=msgs.append)
+            except Exception as e:
+                report.setdefault('shader_errors', {})[name] = repr(e)
+                log('  shader FAILED', name, repr(e)[:200])
+                continue
             if res is None:
                 report.setdefault('no_dx11', []).append(name)
                 continue
@@ -81,6 +93,7 @@ def convert_shaders_in(objects, cache_dir, work_dir, report):
             stats = dict(stats, msgs=msgs[:50])
             pickle.dump((nt, stats), open(cp, 'wb'))
             shutil.rmtree(os.path.join(work_dir, 'hlslcc', key), ignore_errors=True)
+            log('  shader', name, {k: v for k, v in stats.items() if k != 'msgs'}, '%.0fs' % (time.time() - t0))
         report.setdefault('shaders', {})[name] = {k: v for k, v in stats.items() if k != 'msgs'}
         if stats.get('fail'):
             report.setdefault('shader_msgs', {})[name] = stats.get('msgs', [])
@@ -89,78 +102,201 @@ def convert_shaders_in(objects, cache_dir, work_dir, report):
     return n
 
 
-def process_player_file(src, dst, cache_dir, work_dir, ref):
-    load_metal_conventions(ref)
+# ------------------------------------------------------------------------------------------------
+def patch_stream_ref(obj, sd, new_off):
+    """Rewrite only the StreamingInfo offset in an object's raw bytes (no typetree round trip).
+
+    StreamingInfo is the last field of Mesh / Texture2D / Cubemap: UInt64 offset, UInt32 size, string path
+    (int32 length + bytes, aligned to 4)."""
+    raw = bytearray(obj.get_raw_data())
+    path = sd['path'].encode()
+    tail = struct.pack('<QI', sd['offset'], sd['size']) + struct.pack('<i', len(path)) + path
+    tail += b'\0' * ((-len(tail)) % 4)
+    pos = len(raw) - len(tail)
+    if pos < 0 or raw[pos:] != tail:
+        raise RuntimeError('%s %d: StreamingInfo not at the end of the object' % (obj.type.name, obj.path_id))
+    struct.pack_into('<Q', raw, pos, new_off)
+    obj.set_raw_data(bytes(raw))
+
+
+def sprite_textures(data_dir):
+    """(file name, path id) of every texture a Sprite draws from. Those keep their size (see transcode_tex)."""
+    out = set()
+    for f in PLAYER_FILES:
+        p = os.path.join(data_dir, f)
+        if not os.path.exists(p):
+            continue
+        env = UnityPy.load(p)
+        sf = list(env.files.values())[0]
+        externals = [os.path.basename(e.path) for e in sf.externals]
+        for obj in sf.objects.values():
+            if obj.type.name != 'Sprite':
+                continue
+            rd = obj.read_typetree().get('m_RD', {})
+            for k in ('texture', 'alphaTexture'):
+                ref = rd.get(k) or {}
+                if not ref.get('m_PathID'):
+                    continue
+                fid = ref['m_FileID']
+                fname = os.path.basename(f) if fid == 0 else externals[fid - 1]
+                out.add((fname, ref['m_PathID']))
+    return out
+
+
+def rebuild_streams(sf, fname, src_dir, dst_dir, sprite_tex, pool, report):
+    """Copy/re-encode every streamed object of this file into a new .resS; returns (#textures converted)."""
+    items = []   # (offset, obj, tt, plan)
+    res_name = None
+    for obj in sf.objects.values():
+        if obj.type.name not in ('Texture2D', 'Cubemap', 'Mesh', 'Texture2DArray', 'Texture3D'):
+            continue
+        tt = obj.read_typetree()
+        sd = tt.get('m_StreamData') or {}
+        if obj.type.name in tx.TEXTURE_CLASSES:
+            p = tx.plan(tt, (fname, obj.path_id) in sprite_tex)
+        else:
+            p = None
+        if sd.get('size'):
+            if res_name is None:
+                res_name = sd['path']
+            elif sd['path'] != res_name:
+                raise RuntimeError('%s: streams into %s and %s' % (fname, res_name, sd['path']))
+            items.append((sd['offset'], obj, tt, p))
+        elif p is not None:
+            # inline image data: convert in place
+            data = bytes(tt['image data'])
+            enc = tx.encode(p, data)
+            tx.apply(tt, p, len(enc))
+            tt['image data'] = enc
+            obj.save_typetree(tt)
+            report['textures_inline'] = report.get('textures_inline', 0) + 1
+    if not items:
+        return 0
+    items.sort(key=lambda x: x[0])
+    src_path = os.path.join(src_dir, os.path.basename(res_name))
+    dst_path = os.path.join(dst_dir, os.path.basename(res_name))
+    if all(p is None for _, _, _, p in items):
+        shutil.copyfile(src_path, dst_path)       # nothing to convert: offsets stay valid
+        report['resS'] = {'objects': len(items), 'copied': True}
+        return 0
+    converted = 0
+    bytes_in = bytes_out = 0
+    t0 = time.time()
+    with open(src_path, 'rb') as src, open(dst_path, 'wb') as dst:
+        pending = deque()
+
+        def flush(block):
+            nonlocal converted, bytes_out
+            while pending and (block or pending[0][3] is None or pending[0][3].done()):
+                obj, tt, p, fut, raw = pending.popleft()
+                if fut is not None:
+                    try:
+                        data = fut.result()
+                        exp = tx.encoded_size(p)
+                        if len(data) != exp:
+                            raise ValueError('%s: %d bytes, expected %d' % (p['name'], len(data), exp))
+                        tx.apply(tt, p, len(data))
+                        converted += 1
+                    except Exception as e:
+                        report.setdefault('texture_errors', []).append('%s: %r' % (p['name'], e))
+                        data = raw            # keep the original texture
+                else:
+                    data = raw
+                pad = (-dst.tell()) % STREAM_ALIGN
+                if pad:
+                    dst.write(b'\0' * pad)
+                tt['m_StreamData'] = {'offset': dst.tell(), 'size': len(data), 'path': res_name}
+                dst.write(data)
+                bytes_out += len(data)
+                obj.save_typetree(tt)
+
+        for i, (off, obj, tt, p) in enumerate(items):
+            src.seek(off)
+            raw = src.read(tt['m_StreamData']['size'])
+            bytes_in += len(raw)
+            fut = pool.submit(tx.encode, p, raw) if p is not None else None
+            pending.append((obj, tt, p, fut, raw))
+            while len(pending) > IN_FLIGHT:
+                flush(False)
+                if len(pending) > IN_FLIGHT:
+                    pending[0][3].result()
+            if i % 500 == 0:
+                log('  %s: %d/%d streamed objects, %d MB in, %d MB out, %.0fs' %
+                    (fname, i, len(items), bytes_in >> 20, bytes_out >> 20, time.time() - t0))
+        flush(True)
+    report['resS'] = {'objects': len(items), 'mb_in': bytes_in >> 20, 'mb_out': bytes_out >> 20}
+    return converted
+
+
+def process_player_file(f, data_dir, out_data, cache_dir, work_dir, sprite_tex, pool):
     report = {}
+    src = os.path.join(data_dir, f)
+    dst = os.path.join(out_data, f)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
     env = UnityPy.load(src)
     sf = list(env.files.values())[0]
-    n = convert_shaders_in(sf.objects.values(), cache_dir, work_dir, report)
-    report['textures'] = transcode_in(sf.objects.values(), report)
+    report['shaders_converted'] = convert_shaders_in(sf.objects.values(), cache_dir, work_dir, report)
+    report['textures'] = rebuild_streams(sf, os.path.basename(f), os.path.dirname(src), os.path.dirname(dst),
+                                         sprite_tex, pool, report)
     sf._m_target_platform = IOS_PLATFORM
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    with open(dst, 'wb') as f:
-        f.write(sf.save())
-    # streamed data next to the file: <name>.resS / <name>.resource, and for "x.assets" also "x.resource"
-    # (audio: sharedassets0.assets -> sharedassets0.resource, resources.assets -> resources.resource)
-    for base_src, base_dst in {(src, dst), (os.path.splitext(src)[0], os.path.splitext(dst)[0])}:
-        for ext in COPY_WITH:
-            if os.path.exists(base_src + ext):
-                shutil.copyfile(base_src + ext, base_dst + ext)
-    return n, report
-
-
-def job(src, dst, cache_dir, work_dir, ref):
-    try:
-        return process_player_file(src, dst, cache_dir, work_dir, ref)
-    except Exception:
-        return -1, {'error': traceback.format_exc()}
+    with open(dst, 'wb') as fh:
+        fh.write(sf.save())
+    # audio next to the file: sharedassets0.assets -> sharedassets0.resource, resources.assets -> resources.resource
+    for ext in ('.resource',):
+        for base in (src, os.path.splitext(src)[0]):
+            if os.path.exists(base + ext):
+                shutil.copyfile(base + ext, os.path.join(os.path.dirname(dst), os.path.basename(base) + ext))
+    return report
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--game', default=DEFAULT_GAME)
-    ap.add_argument('--out', default='work')
+    ap.add_argument('--out', default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'ics2-work'))
     ap.add_argument('--ref', default=None, help='metal_ref.json from inspect_reference.py')
     ap.add_argument('--only', default=None, help='substring filter on file names (testing)')
-    ap.add_argument('--jobs', type=int, default=3)
+    ap.add_argument('--jobs', type=int, default=max(1, (os.cpu_count() or 4) - 2))
+    ap.add_argument('--max-size', type=int, default=tx.MAX_SIZE)
     a = ap.parse_args()
+    tx.MAX_SIZE = a.max_size
 
-    data = os.path.join(a.game, 'People Playground_Data')
-    out_data = os.path.join(a.out, 'Data')
-    cache_dir = os.path.join(a.out, 'cache', 'shaders')
-    work_dir = os.path.join(a.out, 'tmp')
+    data_dir = os.path.join(a.game, DATA_DIR)
+    out = os.path.abspath(a.out)
+    out_data = os.path.join(out, 'Data')
+    cache_dir = os.path.join(out, 'cache', 'shaders')
+    work_dir = os.path.join(out, 'tmp')
     os.makedirs(cache_dir, exist_ok=True)
-    ref = a.ref or os.path.join(a.out, 'metal_ref.json')
+    ref = a.ref or os.path.join(out, 'metal_ref.json')
     tiers, hdr = load_metal_conventions(ref)
-    log('metal tiers', tiers, 'code header', 'yes' if hdr else 'none (raw MSL)')
+    log('metal tiers', tiers, 'code header', 'yes' if hdr else 'none (raw MSL)', 'max texture size', tx.MAX_SIZE)
 
-    jobs = [(os.path.join(data, f), os.path.join(out_data, f)) for f in PLAYER_FILES if os.path.exists(os.path.join(data, f))]
+    files = [f for f in PLAYER_FILES if os.path.exists(os.path.join(data_dir, f))]
     if a.only:
-        jobs = [j for j in jobs if a.only in j[0]]
-    jobs.sort(key=lambda j: -os.path.getsize(j[0]))
-
-    # StreamingAssets ship as Data/Raw
-    sa = os.path.join(data, 'StreamingAssets')
-    if os.path.isdir(sa) and not a.only:
-        shutil.copytree(sa, os.path.join(out_data, 'Raw'), dirs_exist_ok=True)
+        files = [f for f in files if a.only in f]
     for f in ('RuntimeInitializeOnLoads.json', 'ScriptingAssemblies.json'):
-        if not a.only:
-            shutil.copyfile(os.path.join(data, f), os.path.join(a.out, 'retail-' + f))
+        shutil.copyfile(os.path.join(data_dir, f), os.path.join(out, 'retail-' + f))
 
-    log('converting', len(jobs), 'files')
-    report = {}
+    log('finding sprite textures')
+    sprite_tex = sprite_textures(data_dir)
+    log(len(sprite_tex), 'textures are used by sprites (kept at full size)')
+
+    report_path = os.path.join(out, 'convert_report.json')
+    report = json.load(open(report_path)) if os.path.exists(report_path) and a.only else {}
     t0 = time.time()
-    with ProcessPoolExecutor(max_workers=a.jobs) as ex:
-        futs = {ex.submit(job, src, dst, cache_dir, work_dir, ref): src for src, dst in jobs}
-        for fu in as_completed(futs):
-            src = futs[fu]
-            n, rep = fu.result()
+    with ProcessPoolExecutor(max_workers=a.jobs) as pool:
+        for f in files:
+            log('converting', f)
+            try:
+                rep = process_player_file(f, data_dir, out_data, cache_dir, work_dir, sprite_tex, pool)
+            except Exception:
+                rep = {'error': traceback.format_exc()}
+                log('  ERROR', rep['error'])
             sh = rep.get('shaders', {})
-            bad = sum(1 for s in sh.values() if s.get('fail'))
-            log('done', os.path.relpath(src, data), 'shaders', n, 'with failures', bad, 'textures', rep.get('textures'),
-                'texture errors', len(rep.get('texture_errors', [])), rep.get('error', ''))
-            report[os.path.relpath(src, data)] = rep
-    json.dump(report, open(os.path.join(a.out, 'convert_report.json'), 'w'), indent=1)
+            log('done', f, 'shaders', rep.get('shaders_converted'), 'with failures', sum(1 for s in sh.values() if s.get('fail')),
+                'shader errors', len(rep.get('shader_errors', {})), 'textures', rep.get('textures'),
+                'texture errors', len(rep.get('texture_errors', [])), rep.get('resS', ''))
+            report[f] = rep
+            json.dump(report, open(report_path, 'w'), indent=1)
     log('finished in %.0fs' % (time.time() - t0))
 
 
