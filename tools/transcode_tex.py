@@ -6,7 +6,8 @@ the in-game PC). An iPhone can neither hold that in RAM nor ship it in a sane IP
 
   * size cap: MAX_SIZE px on the longest side. Textures with mipmaps are downscaled by simply dropping their
     top mip levels (no resampling); textures without mipmaps are resized with a box filter.
-  * ASTC block: 4x4 up to 256 px, 6x6 in between (and for normal maps), 8x8 at the cap and for the GIF frames.
+  * ASTC block: 4x4 up to 256 px, 6x6 in between (and for normal maps), 8x8 at the cap, 10x10 for the GIF frames;
+    normal maps are capped at NORMAL_MAX_SIZE.
   * never downscaled: textures used by Sprites (UI Image UVs come from the sprite's pixel rect, which would no
     longer match) and readable textures (scripts may GetPixel them).
   * kept as they are: Alpha8 / single-channel / HDR float formats and anything already mobile-friendly.
@@ -36,6 +37,7 @@ UNCOMPRESSED_BPP = {RGB24: 3, RGBA32: 4, ARGB32: 4, BGRA32: 4}
 TEXTURE_CLASSES = ('Texture2D', 'Cubemap')
 
 MAX_SIZE = 1024
+NORMAL_MAX_SIZE = 512   # normal maps: half the albedo size is invisible on a phone screen
 QUALITY = 60         # astcenc "medium"
 QUALITY_FAST = 20    # GIF frames (thousands of them, low detail)
 USAGE_NORMALMAP = 3  # m_LightmapFormat (TextureUsageMode.NormalmapDXT5nm)
@@ -80,16 +82,18 @@ def plan(tt, sprite_texture=False):
     if crunched:
         mips = 1
 
+    normal = tt.get('m_LightmapFormat') == USAGE_NORMALMAP
+    cap = min(MAX_SIZE, NORMAL_MAX_SIZE) if normal else MAX_SIZE
     start = 0
     out_w, out_h = w, h
     resize = None
-    if not (sprite_texture or readable) and max(w, h) > MAX_SIZE:
+    if not (sprite_texture or readable) and max(w, h) > cap:
         if mips > 1:
-            while start < mips - 1 and max(w >> start, h >> start) > MAX_SIZE:
+            while start < mips - 1 and max(w >> start, h >> start) > cap:
                 start += 1
             out_w, out_h = max(1, w >> start), max(1, h >> start)
         else:
-            s = MAX_SIZE / max(w, h)
+            s = cap / max(w, h)
             resize = (max(1, round(w * s)), max(1, round(h * s)))
             out_w, out_h = resize
     out_mips = mips - start
@@ -97,9 +101,8 @@ def plan(tt, sprite_texture=False):
         out_mips = max(out_w, out_h).bit_length()
 
     m = max(out_w, out_h)
-    normal = tt.get('m_LightmapFormat') == USAGE_NORMALMAP
     if gif:
-        blk = 8
+        blk = 10                          # in-game PC screen animations: thousands of small frames
     elif m <= 256:
         blk = 4
     elif sprite_texture:
