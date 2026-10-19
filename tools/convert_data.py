@@ -11,7 +11,7 @@ Produces <out>/Data/ (goes into the app's Data folder, see package_ipa.py). For 
 Audio (.resource) is copied unchanged. The retail install is only read, never modified.
 Nothing produced here may be committed to the public repo - it is derived from the game.
 """
-import argparse, hashlib, json, os, pickle, shutil, struct, sys, time, traceback
+import argparse, hashlib, json, os, pickle, re, shutil, struct, sys, time, traceback
 from concurrent.futures import ProcessPoolExecutor
 from collections import deque
 
@@ -37,10 +37,19 @@ def log(*a):
 
 
 def make_code_header(hdr):
-    """Declarative code header from metal_ref.json: {"kind": "prefix", "hex": "<bytes before the MSL source>"}."""
+    """Declarative code header from metal_ref.json: {"kind": "prefix", "hex": "<bytes before the MSL source>"}.
+    Bytes 40..43 of the prefix are the colour output mask (4 bits per render target): 0x0f for one target,
+    0xffff for the 4 G-buffer targets of a deferred pass. It is computed from each fragment program's outputs."""
     if hdr.get('kind') == 'prefix':
         prefix = bytes.fromhex(hdr['hex'])
-        return lambda msl: prefix + (msl.encode() if isinstance(msl, str) else msl)
+
+        def header(msl):
+            msl = msl.encode() if isinstance(msl, str) else msl
+            m = re.search(rb'struct Mtl_FragmentOut\s*\{(.*?)\};', msl, re.S)
+            targets = {int(t) for t in re.findall(rb'SV_Target(\d+)', m.group(1))} if m else set()
+            mask = sum(0xf << (4 * t) for t in targets) if targets else 0xf
+            return prefix[:40] + struct.pack('<I', mask) + prefix[44:] + msl
+        return header
     raise ValueError('unknown code_header kind: %r' % hdr.get('kind'))
 
 
