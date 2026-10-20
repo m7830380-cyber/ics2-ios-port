@@ -34,6 +34,7 @@ static class Program
             {
                 case "selftest": return SelfTest();
                 case "handshake": Handshake(address, port, timeout); break;
+                case "puppets": Puppets(address, port, timeout, Flag(args, "--mutate")); break;
                 default: throw new Fail("unknown scenario " + scenario);
             }
             Console.WriteLine("RESULT: PASS");
@@ -70,6 +71,113 @@ static class Program
         Expect(r["coop.names"].Contains(s_Net.LocalId + ":TestBot"), "game does not list the bot: " + r["coop.names"]);
         Say($"game: money={Get(r, "game.money")} day={Get(r, "game.day")} hour={Get(r, "time.hours")} fps={Get(r, "fps")} rtt={s_Net.RoundTripMs()}ms");
     }
+
+    /// Stage 2: the bot walks a circle next to the game's player. The game must show a puppet that follows
+    /// it (within interpolation tolerance) and animates; the bot must receive the game player's own body,
+    /// matching the position the game reports. Leaving must remove the puppet.
+    /// --mutate: the bot expects the puppet 3 m off, so the run must FAIL (proves the check can fail).
+    static void Puppets(string address, int port, int timeout, bool mutate)
+    {
+        var hostStates = new List<PlayerState>();
+        s_Net.Message += (from, id, r) => { if (id == Msg.PlayerState) hostStates.Add(PlayerState.Read(r)); };
+        ConnectWithRetry(address, port, timeout);
+        var r0 = WaitReport(r => r["game.ready"] == "True" && r.ContainsKey("player.pos"), 120, "game in the cafe");
+        var center = ParseVec(r0["player.pos"]);
+        int me = s_Net.LocalId;
+
+        // the game's own body arrives ~20 times a second and matches its reported position
+        WaitFor(() => hostStates.Count >= 20, 10, "20 host player states");
+        var hs = hostStates[hostStates.Count - 1];
+        var r1 = WaitReport(r => true, 10, "host position report");
+        float hostErr = Dist(new[] { hs.X, hs.Y, hs.Z }, ParseVec(r1["player.pos"]));
+        Say($"host body: {hostStates.Count} states, last differs from report by {hostErr:0.000} m");
+        Expect(hs.Player == 0, "host state player id " + hs.Player);
+        Expect(hostErr < 0.25f, $"host body {hostErr:0.00} m away from its reported position");
+
+        // walk a 2 m circle around the host player at ~1.2 m/s for 8 seconds, checking the puppet as we go
+        float start = (float)s_Clock.Elapsed.TotalSeconds, lastSend = -1f, worst = 0f;
+        float[] sent = center;
+        int checks = 0, walking = 0;
+        double nextCheck = start + 1.5;
+        while (s_Clock.Elapsed.TotalSeconds - start < 8)
+        {
+            float t = (float)s_Clock.Elapsed.TotalSeconds;
+            if (t - lastSend >= 0.05f)
+            {
+                lastSend = t;
+                float ang = (t - start) * 0.6f;
+                sent = new[] { center[0] + 2f * (float)Math.Cos(ang), center[1], center[2] + 2f * (float)Math.Sin(ang) };
+                SendState(me, t, sent, (float)(-ang * 180 / Math.PI));
+            }
+            Pump();
+            if (s_Clock.Elapsed.TotalSeconds >= nextCheck)
+            {
+                nextCheck = s_Clock.Elapsed.TotalSeconds + 1.0;
+                var expected = mutate ? new[] { sent[0] + 3f, sent[1], sent[2] } : sent;
+                var r = Report();
+                Expect(r.ContainsKey($"puppet.{me}.pos"), "no puppet for the bot (puppets=" + Get(r, "puppets") + ")");
+                float err = Dist(ParseVec(r[$"puppet.{me}.pos"]), expected);
+                worst = Math.Max(worst, err);
+                checks++;
+                if (r[$"puppet.{me}.walk"] == "True") walking++;
+                Expect(r[$"puppet.{me}.visible"] == "True", "puppet not visible");
+                // 1.2 m/s * (0.1 s interpolation delay + report latency) -> well under 0.6 m
+                Expect(err < 0.6f, $"puppet {err:0.00} m from where the bot is");
+            }
+        }
+        Say($"puppet followed: {checks} checks, worst error {worst:0.00} m, walking in {walking}/{checks}");
+        Expect(checks >= 5, "too few checks");
+        Expect(walking >= checks - 1, $"puppet walk animation on in only {walking}/{checks} checks");
+
+        // stand still: the walk animation stops
+        for (int i = 0; i < 30; i++) { SendState(me, (float)s_Clock.Elapsed.TotalSeconds, sent, 0f); Pump(); Thread.Sleep(35); }
+        WaitReport(r => r[$"puppet.{me}.walk"] == "False", 5, "puppet idle after stopping");
+        Command("shotpuppet", "puppet.png");
+        var rs = WaitReport(r => true, 5, "picture taken");
+        Say($"puppet size {Get(rs, $"puppet.{me}.size")} m, {Get(rs, $"puppet.{me}.renderers")} renderers");
+        var size = ParseVec(rs[$"puppet.{me}.size"]);
+        Expect(size[1] > 1.2f && size[1] < 2.4f, $"puppet is {size[1]:0.00} m tall, not person-sized");
+
+        // leaving removes the puppet: reconnect and check only the new id has one
+        s_Net.Stop();
+        Thread.Sleep(500);
+        ConnectWithRetry(address, port, 30);
+        SendState(s_Net.LocalId, (float)s_Clock.Elapsed.TotalSeconds, center, 0f);
+        WaitReport(r => r["puppets"] == "1" && !r.ContainsKey($"puppet.{me}.pos"), 15, "old puppet removed after leaving");
+    }
+
+    static void Command(string command, string arg)
+    {
+        var w = s_Net.Begin(Msg.TestCommand);
+        w.Put(command);
+        w.Put(arg ?? "");
+        s_Net.SendTo(0);
+    }
+
+    static void SendState(int player, float time, float[] p, float yaw)
+    {
+        var s = new PlayerState { Player = player, Time = time, X = p[0], Y = p[1], Z = p[2], Yaw = yaw };
+        s.Write(s_Net.Begin(Msg.PlayerState));
+        s_Net.SendTo(0, DeliveryMethod.Sequenced);
+    }
+
+    static Dictionary<string, string> Report() => WaitReport(r => true, 5, "report");
+
+    static float[] ParseVec(string s)
+    {
+        var p = s.Split(',');
+        return new[] { float.Parse(p[0], System.Globalization.CultureInfo.InvariantCulture),
+                       float.Parse(p[1], System.Globalization.CultureInfo.InvariantCulture),
+                       float.Parse(p[2], System.Globalization.CultureInfo.InvariantCulture) };
+    }
+
+    static float Dist(float[] a, float[] b)
+    {
+        float dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+        return (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    static bool Flag(string[] a, string name) => Array.IndexOf(a, name) >= 0;
 
     /// The scorer must be able to fail: a report that never arrives and a wrong value both have to throw.
     static int SelfTest()

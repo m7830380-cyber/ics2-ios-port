@@ -15,9 +15,13 @@ BOT = os.path.join(ROOT, 'coop', 'bot')
 BOT_DLL = os.path.join(BOT, 'bin', 'Release', 'net8.0', 'CoopBot.dll')
 EXE = 'Internet Cafe Simulator 2.exe'
 LOG = 'InternetCafeSim2-iOS.log'
-# scenario -> (game role, game extra args, profile seed). Seeds are saves copied into the profile first.
+# scenario -> (bot scenario, game role, game extra args, profile seed, bot args, must fail).
+# Seeds are saves copied into the profile first. "Mutant" scenarios check that a test can fail: the bot is
+# told to expect something wrong, and the suite passes only if that run FAILS.
 SCENARIOS = {
-    'handshake': ('host', [], None),
+    'handshake': ('handshake', 'host', [], None, [], False),
+    'puppets': ('puppets', 'host', [], None, [], False),
+    'puppets-mutant': ('puppets', 'host', [], None, ['--mutate'], True),
 }
 
 
@@ -28,20 +32,44 @@ def run_bot(*args, timeout=600):
     return out, (result[-1] if result else 'RESULT: FAIL bot printed no result')
 
 
-def coop_errors(log_path):
-    """Exceptions in our log that mention co-op code. Pre-existing game errors are not counted."""
-    if not os.path.exists(log_path):
+COOP_FRAMES = ('ICS2iOS.Coop', 'ICS2iOS.PlayerSync', 'ICS2Coop.')
+
+
+def coop_errors(profile):
+    """Errors caused by co-op code: our log's "coop:" error lines, plus entries in Unity's player log whose
+    stack trace runs through co-op classes. The game's own pre-existing errors are not counted."""
+    log_path, player_log = os.path.join(profile, LOG), os.path.join(profile, 'player.log')
+    if not os.path.exists(log_path) or not os.path.exists(player_log):
         return ['game log missing']
-    bad = []
-    lines = open(log_path, encoding='utf-8', errors='replace').read().splitlines()
-    for i, l in enumerate(lines):
-        if '[E]' in l and ('coop' in l.lower() or 'Coop' in ''.join(lines[i:i + 3])):
-            bad.append(l.strip())
+    bad = [l.strip() for l in open(log_path, encoding='utf-8', errors='replace')
+           if '[E]' in l and 'coop:' in l]
+    text = open(player_log, encoding='utf-8', errors='replace').read().replace('\r\n', '\n')
+    for block in text.split('\n\n'):
+        if any(f in block for f in COOP_FRAMES) and ('Exception' in block or 'Error' in block or "Can't" in block):
+            if '[ICS2-iOS]' in block.splitlines()[0]:
+                continue  # our own info lines carry a stack trace too
+            bad.append(block.strip().splitlines()[0])
     return bad
 
 
+def scanner_selftest():
+    """The log scanner must flag a co-op error and ignore a game error and our own info lines."""
+    d = os.path.join(TEST_ROOT, 'profiles', '_scanner-selftest')
+    os.makedirs(d, exist_ok=True)
+    open(os.path.join(d, LOG), 'w').write('10:00:00.000 [I] [ICS2-iOS] coop: hosting\n')
+    open(os.path.join(d, 'player.log'), 'w').write(
+        "Shader error in 'Blur x5'\nUnityEngine.Material:SetTexture\nPauseMenu:Start ()\n\n"
+        "[ICS2-iOS] coop: created puppet\nICS2iOS.PlayerSync:GetPuppet (int)\n\n"
+        "Can't remove Rigidbody because CharacterJoint depends on it\nUnityEngine.Object:DestroyImmediate\n"
+        "ICS2iOS.PlayerSync:MakeBody (int)\n\n")
+    found = coop_errors(d)
+    ok = len(found) == 1 and "Can't remove" in found[0]
+    print('scanner selftest:', 'PASS' if ok else f'FAIL {found}')
+    return ok
+
+
 def run_scenario(name, slot, keep):
-    role, extra, seed = SCENARIOS[name]
+    bot_scenario, role, extra, seed, bot_args, must_fail = SCENARIOS[name]
     profile = os.path.join(TEST_ROOT, 'profiles', f'{name}-slot{slot}')
     if os.path.isdir(profile):
         shutil.rmtree(profile)
@@ -58,7 +86,7 @@ def run_scenario(name, slot, keep):
     game = subprocess.Popen(args)
     print(f'--- {name}: game pid {game.pid}, profile {profile}', flush=True)
     try:
-        out, result = run_bot(name, '--timeout', '240')
+        out, result = run_bot(bot_scenario, '--timeout', '240', *bot_args)
         print(out.rstrip(), flush=True)
         if game.poll() is not None and 'PASS' in result:
             result = f'RESULT: FAIL game exited early with code {game.returncode}'
@@ -70,9 +98,13 @@ def run_scenario(name, slot, keep):
             except subprocess.TimeoutExpired:
                 game.kill()
                 game.wait(15)
-    errors = coop_errors(os.path.join(profile, LOG))
+    errors = coop_errors(profile)
     if errors and 'PASS' in result:
         result = f'RESULT: FAIL {len(errors)} co-op error(s) in the game log, first: {errors[0]}'
+    if must_fail:
+        ok = 'FAIL' in result and 'exception' not in result
+        print(f'{name}: {result} -> mutant {"caught (good)" if ok else "NOT caught"}', flush=True)
+        return ok
     print(f'{name}: {result}', flush=True)
     return 'PASS' in result
 
@@ -82,11 +114,22 @@ def main():
     ap.add_argument('scenarios', nargs='*', default=list(SCENARIOS))
     ap.add_argument('--slot', type=int, default=1)
     ap.add_argument('--keep', action='store_true', help='leave the game running after the scenario')
+    ap.add_argument('--no-build', action='store_true', help='test the current slot without rebuilding')
     a = ap.parse_args()
+    if not a.no_build:
+        # never test a stale build: rebuild the plugins and refresh the slot, stop on any failure
+        for cmd in (['build_plugins.py'], ['coop/make_test_slot.py', '--slot', str(a.slot)]):
+            p = subprocess.run([sys.executable, os.path.join(ROOT, 'tools', *cmd[0].split('/')), *cmd[1:]],
+                               capture_output=True, text=True)
+            if p.returncode != 0:
+                print((p.stdout + p.stderr)[-3000:])
+                print(f'SUITE: FAIL {cmd[0]} failed')
+                sys.exit(1)
+        print('build: plugins rebuilt, slot refreshed')
     subprocess.check_call(['dotnet', 'build', BOT, '-c', 'Release', '-nologo', '-v', 'q'], stdout=subprocess.DEVNULL)
     out, result = run_bot('selftest', timeout=60)
     print('selftest:', result)
-    passed = 'PASS' in result
+    passed = 'PASS' in result and scanner_selftest()
     for s in a.scenarios:
         passed &= run_scenario(s, a.slot, a.keep)
     print('SUITE:', 'PASS' if passed else 'FAIL')

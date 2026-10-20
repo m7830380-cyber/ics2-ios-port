@@ -31,6 +31,7 @@ namespace ICS2iOS
             }
             if (EnviroSky.instance != null)
                 Line(sb, "time.hours", EnviroSky.instance.GameTime.Hours.ToString(Inv));
+            PlayerSync.Report(sb);
         }
 
         public static void Run(int from, string command, string arg)
@@ -44,9 +45,60 @@ namespace ICS2iOS
                 case "log":
                     Log.Info("test: " + arg);
                     break;
+                case "shotpuppet":
+                    ShotPuppet(arg);
+                    break;
                 default:
                     Log.Warn($"test: unknown command '{command}'");
                     break;
+            }
+        }
+
+        /// Renders the first puppet from 2.5 m in front with a temporary camera into <profile>/<file>.png.
+        /// The game draws the picture itself: nothing outside the game window can end up in it.
+        static void ShotPuppet(string file)
+        {
+            var body = PlayerSync.FirstPuppetBody();
+            if (body == null) { Log.Warn("test: shotpuppet: no puppet"); return; }
+            var go = new GameObject("CoopTestCamera");
+            try
+            {
+                var cam = go.AddComponent<Camera>();
+                var main = GameManager.Instance != null ? GameManager.Instance.playerCamera : Camera.main;
+                if (main != null) { cam.CopyFrom(main); cam.RemoveAllCommandBuffers(); }
+                cam.clearFlags = CameraClearFlags.SolidColor;
+                cam.backgroundColor = new Color(0.4f, 0.5f, 0.6f);
+                cam.renderingPath = RenderingPath.Forward;
+                var t = body.transform;
+                go.transform.position = t.position + t.forward * 2.5f + Vector3.up * 1.4f;
+                go.transform.LookAt(t.position + Vector3.up * 0.9f);
+                // only the puppet (moved to a spare layer while rendering), so walls can't hide it
+                const int Layer = 31;
+                var layers = new System.Collections.Generic.Dictionary<GameObject, int>();
+                foreach (var tr in body.GetComponentsInChildren<Transform>(true)) { layers[tr.gameObject] = tr.gameObject.layer; tr.gameObject.layer = Layer; }
+                cam.cullingMask = 1 << Layer;
+                cam.nearClipPlane = 0.05f;
+                var rt = new RenderTexture(640, 360, 24);
+                cam.targetTexture = rt;
+                cam.Render();
+                foreach (var kv in layers) kv.Key.layer = kv.Value;
+                var prev = RenderTexture.active;
+                RenderTexture.active = rt;
+                var tex = new Texture2D(640, 360, TextureFormat.RGB24, false);
+                tex.ReadPixels(new Rect(0, 0, 640, 360), 0, 0);
+                tex.Apply();
+                RenderTexture.active = prev;
+                cam.targetTexture = null;
+                string path = System.IO.Path.Combine(ICS2Shim.Platform.PersistentDataPath, System.IO.Path.GetFileName(file));
+                System.IO.File.WriteAllBytes(path, tex.EncodeToPNG());
+                Object.Destroy(tex);
+                rt.Release();
+                Object.Destroy(rt);
+                Log.Info("test: puppet picture saved to " + path);
+            }
+            finally
+            {
+                Object.Destroy(go);
             }
         }
 
