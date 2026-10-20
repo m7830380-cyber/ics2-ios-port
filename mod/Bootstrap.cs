@@ -37,6 +37,30 @@ namespace ICS2iOS
                      $"api={SystemInfo.graphicsDeviceType} mem={SystemInfo.systemMemorySize}MB cpu={SystemInfo.processorCount}x " +
                      $"screen={Screen.width}x{Screen.height}@{Screen.currentResolution.refreshRate}Hz dpi={Screen.dpi} " +
                      $"safe={Screen.safeArea} unity={Application.unityVersion}");
+            LogShaderSupport();
+        }
+
+        // Device-specific shader problems (purple screen) show up here: which built-in shaders resolve and
+        // whether the GPU reports them as supported.
+        static void LogShaderSupport()
+        {
+            try
+            {
+                var sb = new System.Text.StringBuilder();
+                sb.Append($"shaders: level={SystemInfo.graphicsShaderLevel} device='{SystemInfo.graphicsDeviceVersion}' " +
+                          $"tier={Graphics.activeTier} compute={SystemInfo.supportsComputeShaders} " +
+                          $"maxTex={SystemInfo.maxTextureSize} rt={SystemInfo.supportedRenderTargetCount}");
+                foreach (var n in new[] { "Sprites/Default", "UI/Default", "Hidden/Internal-GUITexture", "Standard", "Hidden/BlitCopy" })
+                {
+                    var s = Shader.Find(n);
+                    sb.Append($" | {n}={(s == null ? "MISSING" : s.isSupported ? "ok" : "UNSUPPORTED")}");
+                }
+                Log.Info(sb.ToString());
+            }
+            catch (Exception e)
+            {
+                Log.Error("shader diagnostics: " + e);
+            }
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
