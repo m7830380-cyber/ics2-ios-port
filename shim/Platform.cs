@@ -87,6 +87,11 @@ namespace ICS2Shim
         public static UnityEngine.Transform FightTarget(UnityEngine.Transform player, object civil) =>
             CoopActive && FightTargetHandler != null ? FightTargetHandler(player, civil) : player;
 
+        /// Co-op: the health Civil.Update checks to keep fighting: the current victim's, not always the host's.
+        public static Func<float, object, float> FightHealthHandler;
+        public static float FightHealth(float health, object civil) =>
+            CoopActive && FightHealthHandler != null ? FightHealthHandler(health, civil) : health;
+
         /// How many hooked methods are running on the stack (the patched methods call CallEnter / CallExit
         /// around their body). A hooked method called from inside another one that is already mirrored on the
         /// other devices (CoveredDepth) is not sent again: the outer call's replay does it there.

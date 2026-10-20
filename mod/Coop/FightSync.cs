@@ -21,6 +21,7 @@ namespace ICS2iOS
         void OnEnable()
         {
             Platform.FightTargetHandler = Target;
+            Platform.FightHealthHandler = Health;
             CoopSession.Received += OnMessage;
             CoopSession.Net.Disconnected += _ => s_Victim.Clear();
             CoopSession.Net.Stopped += s_Victim.Clear;
@@ -37,7 +38,9 @@ namespace ICS2iOS
             int local = CoopSession.Net.LocalId;
             var pos = civ.transform.position;
             int best = local;
-            float bestDist = player != null ? Vector3.Distance(pos, player.position) : float.MaxValue;
+            var ray = GameManager.Instance != null ? GameManager.Instance.playerRay : null;
+            bool localDown = ray != null && (ray.health < 1f || ray.falling);
+            float bestDist = player != null && !localDown ? Vector3.Distance(pos, player.position) : float.MaxValue;
             float currentDist = float.MaxValue;
             bool hasCurrent = s_Victim.TryGetValue(civ, out int current);
             if (hasCurrent && current == local) currentDist = bestDist;
@@ -53,6 +56,18 @@ namespace ICS2iOS
             if (best == local) return player;
             var t = PlayerSync.TargetOf(best);
             return t != null ? t : player;
+        }
+
+        /// Host: the health Civil.Update checks to keep fighting: a guest victim's is "up" or "down" (from their
+        /// player state), so the host being knocked out no longer ends a fight with a guest, and the reverse.
+        static float Health(float health, object self)
+        {
+            var civ = self as Civil;
+            if (civ == null || !CoopSession.IsHost || !s_Victim.TryGetValue(civ, out int victim) || victim == CoopSession.Net.LocalId)
+                return health;
+            foreach (var kv in PlayerSync.Targets())
+                if (kv.Key == victim) return 100f;
+            return 0f;
         }
 
         /// Host, Civil.Attacked (the blow's animation event): true when it went to a guest (the game's own

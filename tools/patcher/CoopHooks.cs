@@ -65,20 +65,23 @@ static class CoopHooks
         var update = civil?.Methods.FirstOrDefault(x => x.Name == "Update" && x.HasBody && x.Parameters.Count == 0);
         if (update == null) { c.Fail("Civil.Update missing (fight target)"); return 0; }
         var target = c.ShimMethod("Platform", "FightTarget", "UnityEngine.Transform", "System.Object");
+        var health = c.ShimMethod("Platform", "FightHealth", "System.Single", "System.Object");
         update.Body.SimplifyMacros();   // short branches may no longer reach
         var il = update.Body.GetILProcessor();
-        int n = 0;
+        int n = 0, h = 0;
         foreach (var ins in update.Body.Instructions.ToList())
         {
             if (ins.OpCode != OpCodes.Ldfld || !(ins.Operand is FieldReference f)) continue;
-            if (f.Name != "player" || f.DeclaringType.FullName != "GameManager") continue;
-            var call = il.Create(OpCodes.Call, target);
-            il.InsertAfter(ins, call);
+            MethodReference shim;
+            if (f.Name == "player" && f.DeclaringType.FullName == "GameManager") { shim = target; n++; }
+            else if (f.Name == "health" && f.DeclaringType.FullName == "PlayerRay") { shim = health; h++; }
+            else continue;
+            il.InsertAfter(ins, il.Create(OpCodes.Call, shim));
             il.InsertAfter(ins, il.Create(OpCodes.Ldarg_0));
-            n++;
         }
         update.Body.OptimizeMacros();
         if (n != 2) c.Fail($"Civil.Update: {n} reads of GameManager.player (expected 2)");
+        if (h != 1) c.Fail($"Civil.Update: {h} reads of PlayerRay.health (expected 1)");
         return n > 0 ? 1 : 0;
     }
 

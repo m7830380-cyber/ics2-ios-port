@@ -80,6 +80,7 @@ namespace ICS2iOS
                 bool wasInCafe = s_InCafe;
                 s_InCafe = false;   // already in the menu: ending the session must not load it again
                 if (wasInCafe && Active) Leave();
+                if (s_RestoreOnMenu) { s_RestoreOnMenu = false; WorldSnapshot.Restore(); }
                 WorldSnapshot.ReloadAfterSession();
                 if (m_AutoStart) m_AutoStartAt = Time.unscaledTime + 3f;
                 // a guest joins from the main menu: the host's world arrives, then the cafe loads
@@ -95,6 +96,7 @@ namespace ICS2iOS
         }
 
         static bool s_InCafe;
+        static bool s_RestoreOnMenu;    // a guest's session ended in the cafe: back to the own save once in the menu
         static float s_CafeLoadedAt;
 
         /// The shared world is up on this device: the cafe has loaded (and, on a guest, matched the host's
@@ -127,8 +129,10 @@ namespace ICS2iOS
         {
             ItemSync.EndSession();
             if (!WorldSnapshot.InSessionSave) return;
-            WorldSnapshot.Restore();
-            if (s_InCafe && Instance != null) Instance.StartCoroutine(ToMainMenu());
+            // still in the host's world: the session save stays the open file until the main menu is up, so
+            // whatever the closing cafe saves cannot land in this device's own save
+            if (s_InCafe && Instance != null) { s_RestoreOnMenu = true; Instance.StartCoroutine(ToMainMenu()); }
+            else WorldSnapshot.Restore();
         }
 
         static System.Collections.IEnumerator ToMainMenu()
