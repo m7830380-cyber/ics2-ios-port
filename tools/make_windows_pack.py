@@ -28,7 +28,13 @@ def main():
     top = 'ICS2-Coop-Windows'
     with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
         for f in sorted(os.listdir(WINDOWS)):
-            z.write(os.path.join(WINDOWS, f), f'{top}/{f}')
+            src = os.path.join(WINDOWS, f)
+            if f.lower().endswith(('.bat', '.cmd', '.ps1', '.txt', '.md')):
+                # Windows line endings: cmd.exe misreads some LF-only batch files
+                text = open(src, 'rb').read().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+                z.writestr(f'{top}/{f}', text)
+            else:
+                z.write(src, f'{top}/{f}')
         z.writestr(f'{top}/manifest.json', json.dumps(manifest, indent=1))
         n = 0
         for f in sorted(os.listdir(a.plugins)):
