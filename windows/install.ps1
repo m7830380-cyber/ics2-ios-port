@@ -94,6 +94,14 @@ if (-not $canLink) {
     if ($Unattended -or (Read-Host "Copy 7 GB? [y/N]") -notmatch "^[yY]") { exit 1 }
 }
 
+# the running game holds its files: replacing them half way would leave a copy that does not start
+$running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($Dest, [StringComparison]::OrdinalIgnoreCase) }
+while ($running) {
+    Say "The co-op game is running. Close it, then press Enter to go on." "Yellow"
+    Read-Host | Out-Null
+    $running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($Dest, [StringComparison]::OrdinalIgnoreCase) }
+}
+
 $managedRel = "$Data\Managed"
 $files = Get-ChildItem $Game -Recurse -File
 $i = 0
@@ -169,9 +177,16 @@ Say ""
 Say "Friends can only join you if Windows Firewall lets the game in (UDP port 27815)."
 Say "Radmin VPN networks count as 'Public' networks, so the normal pop-up is often not enough."
 if ((Read-Host "Add a firewall rule for the co-op copy now? Windows will ask for admin rights. [Y/n]") -notmatch "^[nN]") {
-    $cmd = "netsh advfirewall firewall delete rule name=`"ICS2 Co-op`" | Out-Null; " +
-           "netsh advfirewall firewall add rule name=`"ICS2 Co-op`" dir=in action=allow program=`"$exePath`" enable=yes profile=any protocol=udp | Out-Null"
-    try { Start-Process powershell -Verb RunAs -Wait -ArgumentList "-NoProfile", "-Command", $cmd; Say "Firewall rule added." }
+    # sent encoded: the path has spaces and "(x86)", which plain -Command arguments would break apart
+    $cmd = "netsh advfirewall firewall delete rule name='ICS2 Co-op' | Out-Null; " +
+           "netsh advfirewall firewall add rule name='ICS2 Co-op' dir=in action=allow program='$exePath' enable=yes profile=any protocol=udp; " +
+           "exit `$LASTEXITCODE"
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
+    try {
+        $proc = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList "-NoProfile", "-EncodedCommand", $enc
+        if ($proc.ExitCode -eq 0) { Say "Firewall rule added." "Green" }
+        else { Say "The firewall rule could not be added (code $($proc.ExitCode)). Allow the game when Windows asks, on Private AND Public networks." "Yellow" }
+    }
     catch { Say "Skipped (admin rights refused). Allow the game when Windows asks, on Private AND Public networks." "Yellow" }
 }
 

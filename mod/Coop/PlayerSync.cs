@@ -49,6 +49,7 @@ namespace ICS2iOS
             CoopSession.Received += OnMessage;
             CoopSession.Net.PlayerLeft += OnPlayerLeft;
             CoopSession.Net.Disconnected += OnDisconnected;
+            CoopSession.Net.Stopped += OnStopped;
         }
 
         void OnDisable()
@@ -56,10 +57,12 @@ namespace ICS2iOS
             CoopSession.Received -= OnMessage;
             CoopSession.Net.PlayerLeft -= OnPlayerLeft;
             CoopSession.Net.Disconnected -= OnDisconnected;
+            CoopSession.Net.Stopped -= OnStopped;
         }
 
         void OnPlayerLeft(int id, string name) => Remove(id);
-        void OnDisconnected(string reason) { foreach (var id in new List<int>(s_Puppets.Keys)) Remove(id); }
+        void OnDisconnected(string reason) => OnStopped();
+        void OnStopped() { foreach (var id in new List<int>(s_Puppets.Keys)) Remove(id); }
 
         static void Remove(int id)
         {
@@ -212,6 +215,7 @@ namespace ICS2iOS
             var ray = gm.playerRay;
             if (ray != null && ray.freezed) flags |= PlayerFlags.Frozen;
             if (ray != null && ray.currentPlayerComputer != null && ray.currentPlayerComputer.enterPc) flags |= PlayerFlags.AtComputer;
+            if (ray != null && (ray.health <= 0f || ray.falling)) flags |= PlayerFlags.Down;
             byte pose = LocalPose(gm, out var seat, out float seatYaw);
             int lift = StateWatch.CarUnder(t.position, out var car);
             var s = new PlayerState
@@ -305,7 +309,11 @@ namespace ICS2iOS
 
         Puppet GetPuppet(int player)
         {
-            if (s_Puppets.TryGetValue(player, out var p)) return p;
+            if (s_Puppets.TryGetValue(player, out var p))
+            {
+                if (p.Body != null) return p;
+                Remove(player);     // its body went with an old scene: a new one
+            }
             var body = MakeBody(player);
             if (body == null) return null;
             p = new Puppet { Player = player, Name = CoopSession.Net.NameOf(player), Body = body, Anim = body.GetComponentInChildren<Animator>() };
@@ -357,11 +365,13 @@ namespace ICS2iOS
 
         public static GameObject PuppetBody(int player) => s_Puppets.TryGetValue(player, out var p) ? p.Body : null;
 
-        /// Remote players' bodies, as the game's player transform would be (character controller centre).
+        /// Remote players' bodies, as the game's player transform would be (character controller centre); not
+        /// those knocked out (a fight is over for them, as for the host's own player).
         public static IEnumerable<KeyValuePair<int, Transform>> Targets()
         {
             foreach (var p in s_Puppets.Values)
-                if (p.Target != null && p.Body != null && p.Body.activeInHierarchy && p.Snapshots.Count > 0)
+                if (p.Target != null && p.Body != null && p.Body.activeInHierarchy && p.Snapshots.Count > 0
+                    && (p.Latest.Flags & PlayerFlags.Down) == 0)
                     yield return new KeyValuePair<int, Transform>(p.Player, p.Target);
         }
 

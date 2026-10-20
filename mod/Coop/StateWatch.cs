@@ -20,7 +20,9 @@ namespace ICS2iOS
     // already on the floor when a guest joins.
     public class StateWatch : MonoBehaviour
     {
-        const float ScanInterval = 0.25f, RebindInterval = 4f;
+        // Bind searches the whole scene (a hitch): everything in it is found the first time, later rounds only pick
+        // up what was built or bought since
+        const float ScanInterval = 0.25f, RebindInterval = 15f;
 
         static readonly string[] WatchedFields =
         {
@@ -31,8 +33,8 @@ namespace ICS2iOS
             "GameManager.globalCafeSmell", "Employee.isRecruit", "Employee.fired",
         };
 
-        sealed class AnimEntry { public Animator Anim; public AnimSync.Layout Layout; public AnimSync.State Known; public int Changes; public float Since; public bool Noisy; }
-        sealed class FieldEntry { public Component Owner; public FieldInfo Field; public object Known; public int Changes; public float Since; public bool Noisy; }
+        sealed class AnimEntry { public Animator Anim; public AnimSync.Layout Layout; public AnimSync.State Known, Pending; public int Changes; public float Since, QuietUntil; public bool Noisy; }
+        sealed class FieldEntry { public Component Owner; public FieldInfo Field; public object Known; public int Changes; public float Since, QuietUntil; public bool Noisy; }
         sealed class ActiveEntry { public GameObject Go; public bool Known; }
 
         static readonly List<AnimEntry> s_Anims = new List<AnimEntry>();
@@ -44,14 +46,17 @@ namespace ICS2iOS
         static int s_Sent, s_Applied, s_Noisy;
 
         /// Something that changes all the time by itself (decorations, a jug filling up) is the same on every
-        /// device anyway, or not worth the traffic: more than 12 changes in 10 seconds and it is left alone.
-        static bool TooNoisy(ref int changes, ref float since, string what)
+        /// device anyway, or not worth the traffic: more than 12 changes in 10 seconds and it is left alone for
+        /// 10 seconds (then its value then is sent, so a fire extinguisher's fuel still ends up the same).
+        static bool TooNoisy(ref int changes, ref float since, ref float quietUntil, ref bool noisy, string what)
         {
             float now = Time.unscaledTime;
             if (now - since > 10f) { since = now; changes = 0; }
             if (++changes <= 12) return false;
-            s_Noisy++;
-            Log.Info("coop: not watching " + what + " (changes all the time)");
+            if (!noisy) { s_Noisy++; Log.Info("coop: watching " + what + " less often (changes all the time)"); }
+            noisy = true;
+            quietUntil = now + 10f;
+            since = quietUntil; changes = 0;
             return true;
         }
         float m_NextScan, m_NextBind, m_NextElevator;
@@ -149,11 +154,21 @@ namespace ICS2iOS
         {
             foreach (var e in s_Anims)
             {
-                if (e.Noisy || e.Anim == null || !e.Anim.isActiveAndEnabled) continue;
+                if (e.Anim == null || !e.Anim.isActiveAndEnabled) continue;
+                if (e.Pending != null)
+                {
+                    // the other device's state, which came while this one was switched off
+                    AnimSync.ApplyParams(e.Anim, e.Layout, e.Pending);
+                    e.Pending = null;
+                    e.Known = AnimSync.Capture(e.Anim, e.Layout);
+                    continue;
+                }
+                if (Time.unscaledTime < e.QuietUntil) continue;
                 var s = AnimSync.Capture(e.Anim, e.Layout);
                 if (!AnimSync.ParamsChanged(e.Known, s)) continue;
                 e.Known = s;
-                if (TooNoisy(ref e.Changes, ref e.Since, "animator " + e.Anim.name)) { e.Noisy = true; continue; }
+                // an animator that keeps changing is a decoration doing its own thing on every device: left alone
+                if (TooNoisy(ref e.Changes, ref e.Since, ref e.QuietUntil, ref e.Noisy, "animator " + e.Anim.name)) { e.QuietUntil = float.MaxValue; continue; }
                 var w = CoopSession.Net.Begin(Msg.WatchAnim);
                 NetRef.Put(w, e.Anim);
                 AnimSync.Write(w, s);
@@ -161,11 +176,11 @@ namespace ICS2iOS
             }
             foreach (var e in s_Fields)
             {
-                if (e.Noisy || e.Owner == null) continue;
+                if (e.Owner == null || Time.unscaledTime < e.QuietUntil) continue;
                 var v = e.Field.GetValue(e.Owner);
                 if (Same(e.Known, v)) continue;
                 e.Known = v;
-                if (TooNoisy(ref e.Changes, ref e.Since, e.Owner.GetType().Name + "." + e.Field.Name)) { e.Noisy = true; continue; }
+                if (TooNoisy(ref e.Changes, ref e.Since, ref e.QuietUntil, ref e.Noisy, e.Owner.GetType().Name + "." + e.Field.Name)) continue;
                 var w = CoopSession.Net.Begin(Msg.WatchField);
                 NetRef.Put(w, e.Owner);
                 w.Put(e.Field.Name);
@@ -234,7 +249,8 @@ namespace ICS2iOS
                 s_AnimByRef[anim] = e;
                 s_Anims.Add(e);
             }
-            if (!anim.gameObject.activeInHierarchy) { e.Known = s; return; }
+            if (!anim.gameObject.activeInHierarchy) { e.Known = s; e.Pending = s; return; }
+            e.Pending = null;
             AnimSync.ApplyParams(anim, e.Layout, s);
             e.Known = AnimSync.Capture(anim, e.Layout);
         }
@@ -281,9 +297,15 @@ namespace ICS2iOS
         static FieldInfo s_Dir, s_Speed, s_DistToFloor;
         static MethodInfo s_DoorLocks, s_CallerLights;
 
+        static float s_ElevatorsRetry;
+
         static object[] Elevators()
         {
+            // found again when a car was destroyed, or a few seconds later when none was there yet
+            if (s_Elevators != null && s_Elevators.Length > 0 && (Component)s_Elevators[0] == null) s_Elevators = null;
+            if (s_Elevators != null && s_Elevators.Length == 0 && Time.unscaledTime >= s_ElevatorsRetry) s_Elevators = null;
             if (s_Elevators != null) return s_Elevators;
+            s_ElevatorsRetry = Time.unscaledTime + 3f;
             var type = NetRef.TypeByName("OldElevator.ElevatorBrain");
             if (type == null) return s_Elevators = new object[0];
             var list = new List<object>(FindObjectsOfType(type, true));
@@ -363,7 +385,8 @@ namespace ICS2iOS
                 bool moving = r.GetBool();
                 int dir = r.GetSByte();
                 if (i >= all.Length) continue;
-                if (!s_Follow.TryGetValue(i, out var f))
+                bool first = !s_Follow.TryGetValue(i, out var f);
+                if (first)
                 {
                     f = new CarFollow { Pos = p, At = now };
                     s_Follow[i] = f;
@@ -372,14 +395,21 @@ namespace ICS2iOS
                 f.Vel = moving && f.Moving && dt > 0.01f && dt < 0.5f ? (p - f.Pos) / dt : Vector3.zero;
                 f.Pos = p;
                 f.At = now;
-                if (moving != f.Moving) TripChanged(all[i], moving, dir);
+                // a stopped car is where the host's is before its doors unlock (they only open on its floor)
+                if (!moving) PlaceCar(all[i], p);
+                if (first && !moving)
+                {
+                    try { s_DoorLocks?.Invoke(all[i], new object[] { true }); s_CallerLights?.Invoke(all[i], null); }
+                    catch (Exception e) { Log.Warn("coop: elevator locks: " + e.Message); }
+                }
+                if (moving != f.Moving) TripChanged(all[i], moving, dir, p);
                 f.Moving = moving;
                 f.Dir = dir;
             }
         }
 
         /// Guest: the host's car started or stopped: the same sounds, lights and door locks here.
-        static void TripChanged(object brain, bool moving, int dir)
+        static void TripChanged(object brain, bool moving, int dir, Vector3 pos)
         {
             var type = brain.GetType();
             try
@@ -392,6 +422,7 @@ namespace ICS2iOS
                     (type.GetField("travelSound")?.GetValue(brain) as AudioSource)?.Stop();
                     (type.GetField("breaksSound")?.GetValue(brain) as AudioSource)?.Stop();
                     (type.GetField("stopSound")?.GetValue(brain) as AudioSource)?.Play();
+                    type.GetField("destination")?.SetValue(brain, pos);   // arrived: not "away from its destination"
                     s_DoorLocks?.Invoke(brain, new object[] { false });
                 }
                 s_CallerLights?.Invoke(brain, null);
@@ -404,7 +435,6 @@ namespace ICS2iOS
         static void FollowElevators(float now)
         {
             var all = Elevators();
-            var gm = GameManager.Instance;
             foreach (var kv in s_Follow)
             {
                 if (kv.Key >= all.Length) continue;
@@ -421,19 +451,27 @@ namespace ICS2iOS
                     s_Dir?.SetValue(brain, f.Dir);
                     type.GetField("destination")?.SetValue(brain, new Vector3(car.position.x, f.Dir >= 0 ? 1e6f : -1e6f, car.position.z));
                 }
-                var target = f.Pos + f.Vel * Mathf.Min(now - f.At, 0.15f);
-                var d = target - car.position;
-                if (d.sqrMagnitude < 1e-6f) continue;
-                if (!f.Moving && d.sqrMagnitude > 36f) { car.position = target; continue; }  // far away: just put it there
-                if (gm != null && gm.player != null && Standing(brain, gm.player, car))
-                {
-                    gm.player.position += d;
-                    car.position = target;
-                    Physics.SyncTransforms();     // the character controller must see where it is now
-                    continue;
-                }
-                car.position = target;
+                PlaceCar(brain, f.Pos + f.Vel * Mathf.Min(now - f.At, 0.15f));
             }
+        }
+
+        /// Guest: the car to this position, with the local player if they stand in it.
+        static void PlaceCar(object brain, Vector3 target)
+        {
+            var car = Car(brain);
+            if (car == null) return;
+            var d = target - car.position;
+            if (d.sqrMagnitude < 1e-6f) return;
+            var gm = GameManager.Instance;
+            // far away (joining): just put it there
+            if (d.sqrMagnitude <= 36f && gm != null && gm.player != null && Standing(brain, gm.player, car))
+            {
+                gm.player.position += d;
+                car.position = target;
+                Physics.SyncTransforms();     // the character controller must see where it is now
+                return;
+            }
+            car.position = target;
         }
 
         static bool Standing(object brain, Transform player, Transform car)

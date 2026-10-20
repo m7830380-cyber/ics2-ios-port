@@ -52,8 +52,10 @@ namespace ICS2iOS
 
         /// The game's Options "save" stores its resolution number, which starts at 0 (the smallest mode the monitor
         /// lists, e.g. 640x480) unless the player picked one. Starting with a stored 0 then shrinks the window every
-        /// time. A stored resolution far below the monitor's is replaced by the monitor's own; with none stored, the
-        /// menu's number is set to the monitor's so that saving the options keeps it.
+        /// time. A stored 0 that is far below the monitor's size (or a number the monitor does not have) is replaced
+        /// by the monitor's own; a small mode the player picked on purpose is kept. With none stored, the menu's
+        /// number is set to the monitor's so that saving the options keeps it. Written straight to the save: a
+        /// hidden Options menu has no list yet (it fills it when it opens, from the save).
         void FixResolution()
         {
             var menu = FindObjectOfType<SettingMenu>(true);
@@ -66,13 +68,15 @@ namespace ICS2iOS
                 if (list[i].width == sw && list[i].height == sh) best = i;   // the last one: the highest refresh rate
             if (!FBPP.HasKey("optionresolutionindex")) { menu.SavedresolutionIndex = best; return; }
             int stored = FBPP.GetInt("optionresolutionindex");
-            bool tiny = stored < 0 || stored >= list.Length || list[stored].width < 1024 && sw >= 1280;
-            if (!tiny) return;
+            bool bad = stored < 0 || stored >= list.Length || stored == 0 && list[0].width < 1024 && sw >= 1280;
+            if (!bad) return;
             Log.Info($"resolution: stored #{stored} is too small for the {sw}x{sh} monitor; using {list[best].width}x{list[best].height}");
-            menu.SetResolution(best);
-            menu.resolutionDropdown.value = best;
-            menu.resolutionDropdown.RefreshShownValue();
+            FBPP.SetInt("optionresolutionindex", best);
             FBPP.Save();
+            menu.SavedresolutionIndex = best;
+            Screen.SetResolution(list[best].width, list[best].height, Screen.fullScreenMode);
+            var dd = menu.resolutionDropdown;
+            if (dd != null && best < dd.options.Count) { dd.value = best; dd.RefreshShownValue(); }
         }
 
         void OnGUI()

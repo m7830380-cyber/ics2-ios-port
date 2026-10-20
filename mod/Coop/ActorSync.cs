@@ -64,6 +64,7 @@ namespace ICS2iOS
             CoopSession.Net.PlayerJoined += OnPlayerJoined;
             SceneManager.sceneLoaded += (s, m) => { s_Actors.Clear(); s_Bound = false; s_GuestSetup = false; s_TableReceived = false; };
             CoopSession.Net.Disconnected += _ => RestoreGuest();
+            CoopSession.Net.Stopped += RestoreGuest;
         }
 
         static System.Type[] s_Types;

@@ -9,6 +9,7 @@ namespace ICS2Coop
         public const byte Crouching = 2;
         public const byte AtComputer = 4;   // sitting at a PC (camera zoomed into the screen)
         public const byte Frozen = 8;       // in a menu / cursor mode
+        public const byte Down = 16;        // knocked out (no health left, or falling down)
     }
 
     /// What the body is doing besides walking (PlayerState.Pose); the seat is in PlayerState.Seat*.

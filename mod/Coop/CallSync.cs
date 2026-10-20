@@ -24,11 +24,13 @@ namespace ICS2iOS
     //   HostAlways  only the host runs it, even inside a replay (elevator trips: a guest's car follows the host's,
     //               see StateWatch).
     //   Hit         a fighting customer's blow: the host gives it to the player it went for (FightSync).
+    //   Door        an elevator door: sent as "open" or "close", not as a toggle (a door that is half way on one
+    //               device would otherwise go the other way there).
     // A replay never changes money (the device that made the call already counted it) and its FBPP writes are
     // not sent again. Calls made inside a call that is already being replayed elsewhere are not sent again.
     public class CallSync : MonoBehaviour
     {
-        enum Rule { Mirror, Host, HostReplay, HostOnly, HostEcho, Punch, HostAlways, Hit }
+        enum Rule { Mirror, Host, HostReplay, HostOnly, HostEcho, Punch, HostAlways, Hit, Door }
 
         static readonly Dictionary<string, Rule> Rules = new Dictionary<string, Rule>
         {
@@ -38,7 +40,7 @@ namespace ICS2iOS
             ["OpenableItem.Interact"] = Rule.Mirror,
             ["CivilManager.OpenShop"] = Rule.Mirror, ["CivilManager.CloseShop"] = Rule.Mirror,
             ["OpenCloseSwitch.Clicked"] = Rule.Mirror, ["OpenCloseSwitch.ForceCloseSwitch"] = Rule.Mirror,
-            ["OldElevator.ElevatorButton.Press"] = Rule.Mirror, ["OldElevator.DoorTrigger.Toggle"] = Rule.Mirror,
+            ["OldElevator.ElevatorButton.Press"] = Rule.Mirror, ["OldElevator.DoorTrigger.Toggle"] = Rule.Door,
             ["OldElevator.ElevatorBrain.GoToPosition"] = Rule.HostAlways, ["OldElevator.ElevatorBrain.EmergencyStopBegin"] = Rule.HostAlways,
             ["Toaster.AddBread"] = Rule.Host, ["Toaster.StartToast"] = Rule.Host,
             ["CoffeeMachine.JugDropped"] = Rule.Mirror, ["CoffeeMachine.StartThePourCoffee"] = Rule.Mirror,
@@ -106,7 +108,17 @@ namespace ICS2iOS
             // script): the host already gave that blow to whoever it hit
             if (rule == Rule.Hit) return guest || FightSync.HostHit(self as Civil);
             if (rule == Rule.HostAlways) return guest && CoopSession.WorldReady;
-            if (s_Replaying) return false;                          // the replay itself runs
+            if (s_Replaying)
+            {
+                // the replay itself runs. The host running a guest's call also passes on the dice rolls inside
+                // it: the guest dropped its own (HostReplay), so they would happen on the host only
+                if (rule == Rule.HostReplay && !guest && CoopSession.WorldReady)
+                {
+                    try { Send(self, action, args, -1); }
+                    catch (Exception e) { s_Failed++; Log.Error($"coop: sending {action} failed: {e}"); }
+                }
+                return false;
+            }
             // part of a call replayed elsewhere, or the game setting itself up while it loads
             bool covered = Platform.Covered || !CoopSession.WorldReady;
             try
@@ -115,6 +127,11 @@ namespace ICS2iOS
                 {
                     case Rule.Mirror:
                         if (!covered) Send(self, action, args, -1);
+                        return false;
+                    case Rule.Door:
+                        // a locked door does nothing (the game says "same floor as the elevator" here only)
+                        if (!covered && self is OldElevator.DoorTrigger door && !door.locked)
+                            Send(self, action, new object[] { door.isFullyClosed }, -1);
                         return false;
                     case Rule.Host:
                         if (!guest) return false;
@@ -182,7 +199,7 @@ namespace ICS2iOS
             }
             catch (Exception e) { s_Failed++; Log.Error($"coop: bad call message {action}: {e.Message}"); return; }
             Rules.TryGetValue(action, out var rule);
-            if (CoopSession.IsHost && (rule == Rule.Mirror))
+            if (CoopSession.IsHost && (rule == Rule.Mirror || rule == Rule.Door))
             {
                 // pass a guest's call on to the other guests
                 var w = CoopSession.Net.Begin(Msg.Call);
@@ -191,6 +208,7 @@ namespace ICS2iOS
             }
             if (rule == Rule.Host && CoopSession.IsHost) { RunAsHost(self, action, args, seed); return; }
             if (rule == Rule.Punch && CoopSession.IsHost) { RunPunch(self, action, args); return; }
+            if (rule == Rule.Door) { ReplayDoor(self, args, seed); return; }
             Replay(self, action, args, seed, from);
         }
 
@@ -212,7 +230,33 @@ namespace ICS2iOS
                     if (p != null && p.baseballBat == bat && p.GetComponent<Collider>() != null) { hit = p.GetComponent<Collider>(); break; }
             if (hit == null) { Log.Warn("coop: no punch collider to replay a guest's hit"); return; }
             Note("guest punched " + (self != null ? self.name : "?"));
-            Invoke(self, action, new object[] { hit }, replay: true);
+            // as if the host had punched: the guest did not run it, so what it changes is sent from here
+            Invoke(self, action, new object[] { hit }, replay: false);
+        }
+
+        static FieldInfo s_DoorClosing;
+
+        /// An elevator door opened or closed on another device: the same here, unless it already goes that way.
+        static void ReplayDoor(UnityEngine.Object self, object[] args, int seed)
+        {
+            var door = self is GameObject go ? go.GetComponent<OldElevator.DoorTrigger>() : self as OldElevator.DoorTrigger;
+            if (door == null || args.Length < 1 || !(args[0] is bool open)) { s_Failed++; Log.Warn("coop: bad elevator door call"); return; }
+            if (s_DoorClosing == null) s_DoorClosing = typeof(OldElevator.DoorTrigger).GetField("closing", BindingFlags.NonPublic | BindingFlags.Instance);
+            bool closing = s_DoorClosing != null && (bool)s_DoorClosing.GetValue(door);
+            bool goingOpen = !door.isFullyClosed && !closing;
+            if (open == goingOpen) return;
+            // the host's locks are the real ones; a guest's door follows the host's (its car is a moment behind)
+            bool locked = door.locked;
+            if (locked && CoopSession.IsHost) return;
+            door.locked = false;
+            UnityEngine.Random.InitState(seed);
+            try
+            {
+                if (open) Invoke(door, "OldElevator.DoorTrigger.Open", new object[0], replay: true);
+                else Invoke(door, "OldElevator.DoorTrigger.Close", new object[] { false }, replay: true);
+                s_Replayed++;
+            }
+            finally { if (door != null) door.locked = locked; }
         }
 
         static void Replay(UnityEngine.Object self, string action, object[] args, int seed, int from)

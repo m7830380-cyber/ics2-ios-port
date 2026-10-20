@@ -51,7 +51,7 @@ namespace ICS2Coop
     /// game: it connects players, finds hosts on the LAN and moves typed messages. The host is player 0.
     public sealed class CoopNet : INetEventListener
     {
-        public const int ProtocolVersion = 3;
+        public const int ProtocolVersion = 4;
         public const int DefaultPort = 27815;
         const string ConnectKey = "ics2coop/";
         const string DiscoverAsk = "ICS2COOP?";
@@ -72,6 +72,9 @@ namespace ICS2Coop
         /// (host name, address) when a LAN host answers a discovery broadcast.
         public event Action<string, IPEndPoint> HostFound;
         public event Action<string> Disconnected;
+        /// This device ended its session itself (Stop): LiteNetLib reports no disconnects then, so the session's
+        /// leftovers (remote bodies, pending values) are cleared on this.
+        public event Action Stopped;
 
         // peer id (LiteNetLib) <-> player id (ours, stable for the session)
         readonly Dictionary<int, int> m_PlayerOfPeer = new Dictionary<int, int>();
@@ -252,12 +255,14 @@ namespace ICS2Coop
 
         public void Stop()
         {
-            if (Net.IsRunning) Net.Stop(true);
+            bool was = Net.IsRunning;
+            if (was) Net.Stop(true);
             m_PlayerOfPeer.Clear();
             m_PeerOfPlayer.Clear();
             m_Names.Clear();
             LocalId = -1;
             m_NextPlayerId = 1;
+            if (was) Stopped?.Invoke();
         }
 
         public void Poll() { if (Net.IsRunning) Net.PollEvents(); }

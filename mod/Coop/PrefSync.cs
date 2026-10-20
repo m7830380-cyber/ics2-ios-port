@@ -58,6 +58,7 @@ namespace ICS2iOS
             Platform.PrefSetHandler = OnSet;
             CoopSession.Received += OnMessage;
             CoopSession.Net.Disconnected += _ => Clear();
+            CoopSession.Net.Stopped += Clear;
         }
 
         public static void Clear() { s_Dirty.Clear(); s_Known.Clear(); }

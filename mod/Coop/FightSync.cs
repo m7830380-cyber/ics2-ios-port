@@ -23,6 +23,7 @@ namespace ICS2iOS
             Platform.FightTargetHandler = Target;
             CoopSession.Received += OnMessage;
             CoopSession.Net.Disconnected += _ => s_Victim.Clear();
+            CoopSession.Net.Stopped += s_Victim.Clear;
         }
 
         void OnDisable() => CoopSession.Received -= OnMessage;
@@ -76,6 +77,7 @@ namespace ICS2iOS
             if (ray == null || ray.health <= 0f || ray.falling) return;
             // the same damage as Civil.Attacked, with this player's skills
             int damage = FBPP.GetString("skillbody2") == "opened" ? 10 : FBPP.GetString("skillbody") == "opened" ? 15 : 20;
+            if (AudioManager.Instance != null) AudioManager.Instance.PlaySfx(AudioManager.Instance.punchSfx, 0.5f);
             ray.Damage(damage);
             s_HitsTaken++;
         }

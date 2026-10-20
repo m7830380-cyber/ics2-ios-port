@@ -39,7 +39,13 @@ namespace ICS2iOS
             Net.Message += OnMessage;
             Net.PlayerJoined += (id, name) => DebugOverlay.Toast(name + " joined");
             Net.PlayerLeft += (id, name) => DebugOverlay.Toast(name + " left");
-            Net.Disconnected += reason => { DebugOverlay.Toast("Disconnected from host"); EndGuestSession(); };
+            Net.Disconnected += reason =>
+            {
+                DebugOverlay.Toast(reason == "ConnectionRejected"
+                    ? "The host refused: different co-op build (both players need the same one), or the session is full"
+                    : "Disconnected from host");
+                EndGuestSession();
+            };
             WorldSnapshot.Init();
 
             TestMode = Platform.CommandLineFlag("-ics2test");
@@ -71,8 +77,9 @@ namespace ICS2iOS
             if (s.name == "MainMenu")
             {
                 // leaving the cafe ends the session; a guest goes back to its own save
-                if (s_InCafe && Active) Leave();
-                s_InCafe = false;
+                bool wasInCafe = s_InCafe;
+                s_InCafe = false;   // already in the menu: ending the session must not load it again
+                if (wasInCafe && Active) Leave();
                 WorldSnapshot.ReloadAfterSession();
                 if (m_AutoStart) m_AutoStartAt = Time.unscaledTime + 3f;
                 // a guest joins from the main menu: the host's world arrives, then the cafe loads
