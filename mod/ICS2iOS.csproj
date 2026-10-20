@@ -28,6 +28,7 @@
     <Reference Include="UnityEngine.UI"><HintPath>$(GameAsmDir)\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Unity.TextMeshPro"><HintPath>$(GameAsmDir)\Unity.TextMeshPro.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Unity.Postprocessing.Runtime"><HintPath>$(GameAsmDir)\Unity.Postprocessing.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="DOTween"><HintPath>$(GameAsmDir)\DOTween.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="FileBasedPrefs"><HintPath>$(GameAsmDir)\FileBasedPrefs.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine"><HintPath>$(ManagedDir)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>

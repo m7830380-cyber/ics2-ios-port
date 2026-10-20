@@ -30,6 +30,9 @@ SCENARIOS = {
     'join-mutant': ('join', 'guest', [], 'own-save', ['--fixture', FIXTURES, '--mutate'], True),
     'economy-host': ('economy-host', 'host', [], None, [], False),
     'economy-guest': ('economy-guest', 'guest', [], 'own-save', ['--fixture', FIXTURES], False),
+    'items-host': ('items-host', 'host', [], None, [], False),
+    'items-host-mutant': ('items-host', 'host', [], None, ['--mutate'], True),
+    'items-guest': ('items-guest', 'guest', [], 'own-save', ['--fixture', FIXTURES], False),
     'economy-guest-mutant': ('economy-guest', 'guest', [], 'own-save', ['--fixture', FIXTURES, '--mutate'], True),
 }
 

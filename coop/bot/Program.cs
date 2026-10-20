@@ -12,12 +12,14 @@ using LiteNetLib.Utils;
 //   CoopBot <scenario> [--address 127.0.0.1] [--port 27815] [--timeout 240]
 //
 // Prints step lines and ends with exactly one "RESULT: PASS" or "RESULT: FAIL <why>" (exit code 0 / 1).
-static class Program
+static partial class Program
 {
     static CoopNet s_Net;
     static readonly Dictionary<string, Dictionary<string, string>> s_Reports = new Dictionary<string, Dictionary<string, string>>();
     static int s_Query;
     static int s_ReportTarget; // player the state queries go to (0 = host; the bot as host asks its guest)
+    static string s_ReportDetail; // extra report detail, e.g. "items=12"
+
     static readonly Stopwatch s_Clock = Stopwatch.StartNew();
 
     static int Main(string[] args)
@@ -45,6 +47,14 @@ static class Program
                     break;
                 }
                 case "economy-host": EconomyHost(address, port, timeout); break;
+                case "items-host": ItemsHost(address, port, timeout, Flag(args, "--mutate")); break;
+                case "items-guest":
+                {
+                    ListenItems();
+                    int guest = JoinGuest(port, timeout, Arg(args, "--fixture", "fixtures"), false);
+                    ItemsGuest(guest);
+                    break;
+                }
                 default: throw new Fail("unknown scenario " + scenario);
             }
             Console.WriteLine("RESULT: PASS");
@@ -162,9 +172,16 @@ static class Program
     static void Snapshot(string address, int port, int timeout, string fixtureDir)
     {
         string json = null;
-        s_Net.Message += (from, id, r) => { if (id == Msg.WorldSnapshot) json = r.GetLargeString(); };
+        byte[] ids = null;
+        s_Net.Message += (from, id, r) =>
+        {
+            if (id == Msg.WorldSnapshot) json = r.GetLargeString();
+            else if (id == Msg.ItemIds) ids = r.GetRemainingBytes();
+        };
         ConnectWithRetry(address, port, timeout);
-        WaitFor(() => json != null, 20, "world snapshot");
+        WaitFor(() => json != null && ids != null, 20, "world snapshot and item ids");
+        System.IO.Directory.CreateDirectory(fixtureDir);
+        System.IO.File.WriteAllBytes(System.IO.Path.Combine(fixtureDir, "itemids.bin"), ids);
         Say($"snapshot: {json.Length / 1024} KB");
         var save = SaveJson.Parse(json);
         var rep = WaitReport(r => r["game.ready"] == "True", 30, "game ready");
@@ -200,6 +217,14 @@ static class Program
         s_Net.Begin(Msg.WorldSnapshot).PutLargeString(world);
         s_Net.SendTo(guest);
 
+        var idsFile = System.IO.Path.Combine(fixtureDir, "itemids.bin");
+        if (System.IO.File.Exists(idsFile))
+        {
+            var w = s_Net.Begin(Msg.ItemIds);
+            var b = System.IO.File.ReadAllBytes(idsFile);
+            w.Put(b, 0, b.Length);
+            s_Net.SendTo(guest);
+        }
         var r = WaitReportFrom(guest, x => x["scene"] == "MainScene" && x["game.ready"] == "True", 180, "guest in the cafe");
         r = WaitReportFrom(guest, x => x["game.day"] != "0", 20, "guest loaded the save");
         Expect(r["save.file"] == "coop-session.save", "guest plays in " + r["save.file"]);
@@ -335,11 +360,11 @@ static class Program
         s_Net.SendTo(to);
     }
 
-    static void SendState(int player, float time, float[] p, float yaw)
+    static void SendState(int player, float time, float[] p, float yaw, int to = 0)
     {
         var s = new PlayerState { Player = player, Time = time, X = p[0], Y = p[1], Z = p[2], Yaw = yaw };
         s.Write(s_Net.Begin(Msg.PlayerState));
-        s_Net.SendTo(0, DeliveryMethod.Sequenced);
+        s_Net.SendTo(to, DeliveryMethod.Sequenced);
     }
 
     static Dictionary<string, string> Report() => WaitReport(r => true, 5, "report");
@@ -396,7 +421,7 @@ static class Program
         while (s_Clock.Elapsed.TotalSeconds < deadline)
         {
             string tag = "q" + (++s_Query);
-            s_Net.Begin(Msg.TestQuery).Put(tag);
+            s_Net.Begin(Msg.TestQuery).Put(s_ReportDetail == null ? tag : tag + "|" + s_ReportDetail);
             s_Net.SendTo(s_ReportTarget);
             var until = s_Clock.Elapsed.TotalSeconds + 2;
             while (s_Clock.Elapsed.TotalSeconds < until && !s_Reports.ContainsKey(tag)) Pump();
@@ -429,6 +454,8 @@ static class Program
     {
         if (id != Msg.TestReport) return;
         string tag = r.GetString();
+        int bar = tag.IndexOf('|');
+        if (bar >= 0) tag = tag.Substring(0, bar);
         var map = new Dictionary<string, string>();
         foreach (var line in r.GetString().Split('\n'))
         {

@@ -101,6 +101,7 @@ namespace ICS2iOS
         /// world to the main menu.
         static void EndGuestSession()
         {
+            ItemSync.EndSession();
             if (!WorldSnapshot.InSessionSave) return;
             WorldSnapshot.Restore();
             if (s_InCafe && Instance != null) Instance.StartCoroutine(ToMainMenu());
@@ -175,7 +176,8 @@ namespace ICS2iOS
         static void SendTestReport(int to, string tag)
         {
             var sb = new StringBuilder();
-            CoopTestAgent.Report(sb);
+            int bar = tag.IndexOf('|');
+            CoopTestAgent.Report(sb, bar >= 0 ? tag.Substring(bar + 1) : "");
             var w = Net.Begin(Msg.TestReport);
             w.Put(tag);
             w.Put(sb.ToString());

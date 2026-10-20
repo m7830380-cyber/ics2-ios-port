@@ -21,6 +21,14 @@ namespace ICS2Coop
         MoneyDelta = 30,  // guest -> host: seq, amount the guest's game added to / took from the money
         MoneyState = 31,  // host -> guest: authoritative total, last MoneyDelta seq applied for this guest
         Clock = 32,       // host -> all: game day, Enviro day/year, hour of day (unreliable, 1/s)
+        ItemIds = 40,     // host -> joining guest: network ids of the world's items (by save slot / scene path)
+        ItemSpawn = 41,   // id, item state (the game's own save keys for one item), held by player or -1
+        ItemTake = 42,    // id, player: picked up (shown in that player's hands)
+        ItemPlace = 43,   // id, position, rotation, built, kinematic, rotation helper: put down / built
+        ItemMove = 44,    // id, position, rotation, final: a thrown / pushed item moving (owner streams)
+        ItemDestroy = 45, // id: gone (opened, eaten, sold, put into the inventory ...)
+        BoxSpawn = 46,    // id, box prefab index, item tag, position, rotation: a delivery box arrived
+        ShopOrder = 47,   // guest -> host: item tags ordered on the guest's in-game shop
     }
 
     /// Network layer shared by the game (Unity) and the headless test bot (.NET). It knows nothing about the

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using DG.Tweening;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -11,7 +12,7 @@ namespace ICS2iOS
     {
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
-        public static void Report(StringBuilder sb)
+        public static void Report(StringBuilder sb, string detail = "")
         {
             var net = CoopSession.Net;
             Line(sb, "scene", SceneManager.GetActiveScene().name);
@@ -36,6 +37,8 @@ namespace ICS2iOS
                 Line(sb, "time.hours", EnviroSky.instance.GameTime.Hours.ToString(Inv));
             PlayerSync.Report(sb);
             WorldSync.Report(sb);
+            ItemSync.Report(sb, detail.StartsWith("items=") ? detail.Substring(6) : "");
+            Line(sb, "items.any", ItemSync.AnyWorldItemId().ToString(Inv));
             if (EnviroSky.instance != null) Line(sb, "time.hourf", EnviroSky.instance.internalHour.ToString("0.000", Inv));
         }
 
@@ -54,6 +57,58 @@ namespace ICS2iOS
                     // what every money change in the game does: edit the field directly
                     GameManager.Instance.money += float.Parse(arg, Inv);
                     break;
+                case "take":
+                {
+                    // what pressing E on an item does
+                    var go = ItemSync.Get(int.Parse(arg, Inv));
+                    if (go != null) GameManager.Instance.playerRay.TakeItem(go.GetComponent<Item>());
+                    break;
+                }
+                case "build":
+                {
+                    // aim at a spot and click: the item is moved there by the build preview, then built
+                    var ray = GameManager.Instance.playerRay;
+                    if (ray.takedItem == null) { Log.Warn("test: build: nothing in hand"); break; }
+                    var p = arg.Split(',');
+                    ray.takedItem.transform.DOKill();
+                    ray.takedItem.transform.position = new Vector3(float.Parse(p[0], Inv), float.Parse(p[1], Inv), float.Parse(p[2], Inv));
+                    ray.Build(ray.takedItem);
+                    break;
+                }
+                case "spawnitem":
+                {
+                    // what opening a delivery box does (PlayerRay, CargoBox branch)
+                    var parts = arg.Split('@');
+                    var p = parts[1].Split(',');
+                    foreach (var prefab in GameManager.Instance.allGamePrefabs)
+                    {
+                        if (prefab.myItem.itemTag != parts[0]) continue;
+                        var go = Object.Instantiate(prefab.gameObject, new Vector3(float.Parse(p[0], Inv), float.Parse(p[1], Inv), float.Parse(p[2], Inv)), Quaternion.identity);
+                        go.name += "TEST";
+                        foreach (var s in SaveManager.Instance.allSavers) if (s.item == null) { s.AddItem(go.GetComponent<Item>()); break; }
+                        break;
+                    }
+                    break;
+                }
+                case "destroyitem":
+                {
+                    var go = ItemSync.Get(int.Parse(arg, Inv));
+                    if (go != null)
+                    {
+                        var item = go.GetComponent<Item>();
+                        if (item != null && item.mySaver != null) item.mySaver.DeleteItem();
+                        Object.Destroy(go);
+                    }
+                    break;
+                }
+                case "order":
+                {
+                    // put one item in the in-game shop basket and pay (ZamazorManager, as the shop page does)
+                    var zm = GameManager.Instance.zamazorManager;
+                    zm.AddMyItemToBasket(GameManager.Instance.GiveMeItemObject(arg));
+                    zm.CompletePayment();
+                    break;
+                }
                 case "dailychanges":
                     GameManager.Instance.DailyChanges();
                     break;

@@ -203,6 +203,8 @@ namespace ICS2iOS
             return body;
         }
 
+        public static GameObject PuppetBody(int player) => s_Puppets.TryGetValue(player, out var p) ? p.Body : null;
+
         public static GameObject FirstPuppetBody()
         {
             foreach (var p in s_Puppets.Values) if (p.Body != null) return p.Body;
