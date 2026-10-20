@@ -377,6 +377,7 @@ static class Program
             ("CivilManager", "SendCustomer"),           // customers arrive (hourly)
             ("CrackManager", "SpawnCrackOrder"),        // crack orders for the PC side job
             ("SecondCafeManager", "CabinAddMoneyHours"),// second cafe income (hourly)
+            ("FamilyManager", "CheckWorkers"),          // wife / son earnings (hourly)
             ("GameManager", "DailyChanges"),            // day rollover: bills, NPC resets, day++ (host sleeps)
             ("SaveManager", "Save"),                    // the world is saved by the host (Save also runs daily
                                                         // side effects: coin prices, employee work days)
