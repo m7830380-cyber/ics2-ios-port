@@ -122,7 +122,7 @@ def run_scenario(name, slot, keep):
         seed_hash = sha(src)
     exe = os.path.join(TEST_ROOT, f'slot{slot}', EXE)
     args = [exe, '-screen-fullscreen', '0', '-screen-width', '640', '-screen-height', '360',
-            '-ics2profile', profile, '-ics2test', '-ics2name', f'Game{slot}',
+            '-ics2profile', profile, '-ics2test', '-iosgraphics', '-ics2name', f'Game{slot}',
             '-logFile', os.path.join(profile, 'player.log')]
     if role == 'host':
         args += ['-ics2autostart', '-ics2coop', 'host']

@@ -370,8 +370,27 @@ static class Program
         n += MakeNoOp(c, mod.GetType("Weather"), "Start");
 
         // --- settings: the resolution list has one entry on iOS, a saved desktop index threw in
-        // SettingMenu.Start and skipped loading the remaining settings (volume, AA, motion blur ...)
-        n += MakeNoOp(c, mod.GetType("SettingMenu"), "SetResolution");
+        // SettingMenu.Start and skipped loading the remaining settings (volume, AA, motion blur ...).
+        // SetResolution runs only when Platform.ResolutionAllowed (Windows, index inside the list).
+        {
+            var t = mod.GetType("SettingMenu");
+            var m = t?.Methods.FirstOrDefault(x => x.Name == "SetResolution" && x.Parameters.Count == 1);
+            var list = t?.Fields.FirstOrDefault(x => x.Name == "resolutions");
+            if (m == null || list == null) c.Fail("SettingMenu.SetResolution / resolutions missing");
+            else
+            {
+                var allowed = c.ShimMethod("Platform", "ResolutionAllowed", "System.Int32", "UnityEngine.Resolution[]");
+                var il = m.Body.GetILProcessor();
+                var first = m.Body.Instructions[0];
+                il.InsertBefore(first, il.Create(OpCodes.Ldarg_1));
+                il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+                il.InsertBefore(first, il.Create(OpCodes.Ldfld, list));
+                il.InsertBefore(first, il.Create(OpCodes.Call, allowed));
+                il.InsertBefore(first, il.Create(OpCodes.Brtrue, first));
+                il.InsertBefore(first, il.Create(OpCodes.Ret));
+                n++;
+            }
+        }
 
         // --- co-op: the host runs the shared world; on a guest these return at once ----------------
         foreach (var (type, method) in new[]

@@ -138,6 +138,12 @@ foreach ($init in @(@("EarlyInit", 4), @("Init", 1))) {
 Patch-Product (Join-Path $dataDir "app.info")
 Patch-Product (Join-Path $dataDir "globalgamemanagers")
 
+# window size/mode left by an older build of the co-op copy: the game picks its own again
+$reg = "HKCU:\Software\Cheesecake Dev\$CoopProduct"
+if (Test-Path $reg) {
+    (Get-Item $reg).Property | Where-Object { $_ -like "Screenmanager*" } | ForEach-Object { Remove-ItemProperty $reg -Name $_ -ErrorAction SilentlyContinue }
+}
+
 # ---- 4. saves, shortcut, firewall ---------------------------------------------------------------------
 if ($Unattended) { Say "Installed (unattended) to $Dest" "Green"; exit 0 }
 $low = Join-Path $env:USERPROFILE "AppData\LocalLow\Cheesecake Dev"

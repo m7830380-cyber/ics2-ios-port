@@ -24,8 +24,8 @@ namespace ICS2iOS
         }
 
         /// The iOS graphics options. The Windows build keeps the game's own settings (test copies, -ics2test,
-        /// use the phone defaults so two games fit in memory).
-        static bool Applies => Bootstrap.OnDevice || Platform.CommandLineFlag("-ics2test");
+        /// pass -iosgraphics to use the phone defaults so two games fit in memory).
+        static bool Applies => Bootstrap.OnDevice || Platform.CommandLineFlag("-iosgraphics");
 
         public static void Apply()
         {

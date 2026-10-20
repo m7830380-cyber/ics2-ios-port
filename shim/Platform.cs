@@ -202,6 +202,8 @@ namespace ICS2Shim
         public static void SetResolution(int width, int height, FullScreenMode mode)
         { if (Desktop) Screen.SetResolution(width, height, mode); else Ignored($"SetResolution({width}x{height}, {mode})"); }
         public static void SetFullScreen(bool value) { if (Desktop) Screen.fullScreen = value; }
+        /// SettingMenu.SetResolution: the game's resolution option (Windows only, and only a valid list index).
+        public static bool ResolutionAllowed(int index, Resolution[] list) => Desktop && list != null && index >= 0 && index < list.Length;
         public static void SetFullScreenMode(FullScreenMode mode) { if (Desktop) Screen.fullScreenMode = mode; }
 
         static void Ignored(string what) => Debug.Log("[ICS2-iOS] game requested Screen." + what + " - ignored on iOS");

@@ -48,6 +48,7 @@ namespace ICS2iOS
             Line(sb, "items.tableTag", TableTag());
             Line(sb, "items.any", ItemSync.AnyWorldItemId().ToString(Inv));
             if (EnviroSky.instance != null) Line(sb, "time.hourf", EnviroSky.instance.internalHour.ToString("0.000", Inv));
+            Line(sb, "screen", Screen.width + "x" + Screen.height + (Screen.fullScreen ? " full" : " window") + " list=" + Screen.resolutions.Length);
             WorldReport(sb);
         }
 
@@ -225,6 +226,16 @@ namespace ICS2iOS
                 case "dailychanges":
                     GameManager.Instance.DailyChanges();
                     break;
+                case "pause":
+                    GameManager.Instance.PauseGameForce();
+                    break;
+                case "res":
+                {
+                    // the game's own resolution option (SettingMenu), index into Screen.resolutions
+                    var menu = Object.FindObjectOfType<SettingMenu>(true);
+                    if (menu != null) menu.SetResolution(int.Parse(arg, Inv)); else Log.Warn("test: no SettingMenu");
+                    break;
+                }
                 case "tp":
                 {
                     // move the player ("x,y,z"), for looking at places (the sky outside)

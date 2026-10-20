@@ -95,6 +95,7 @@ namespace ICS2iOS
                 go.AddComponent<StateWatch>();
                 go.AddComponent<CoopPanel>();
                 go.AddComponent<SkyGuard>();
+                go.AddComponent<DesktopButtons>();
                 IosGraphics.Init();
 
                 SteamOffline.AchievementUnlocked += name => DebugOverlay.Toast("Achievement unlocked");

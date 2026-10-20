@@ -75,7 +75,7 @@ def dist(a, b):
 def launch(slot, profile, name, extra):
     exe = os.path.join(rt.TEST_ROOT, f'slot{slot}', rt.EXE)
     args = [exe, '-screen-fullscreen', '0', '-screen-width', '640', '-screen-height', '360',
-            '-ics2profile', profile, '-ics2test', '-ics2name', name, '-logFile', os.path.join(profile, 'player.log')] + extra
+            '-ics2profile', profile, '-ics2test', '-iosgraphics', '-ics2name', name, '-logFile', os.path.join(profile, 'player.log')] + extra
     return subprocess.Popen(args)
 
 
