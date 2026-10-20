@@ -21,6 +21,7 @@ namespace ICS2Coop
         MoneyDelta = 30,  // guest -> host: seq, amount the guest's game added to / took from the money
         MoneyState = 31,  // host -> guest: authoritative total, last MoneyDelta seq applied for this guest
         Clock = 32,       // host -> all: game day, Enviro day/year, hour of day (unreliable, 1/s)
+        PlayerHit = 33,   // host -> one guest: one of the host's people hit that guest's body (damage)
         ItemIds = 40,     // host -> joining guest: network ids of the world's items (by save slot / scene path)
         ItemSpawn = 41,   // id, item state (the game's own save keys for one item), held by player or -1
         ItemTake = 42,    // id, player: picked up (shown in that player's hands)
@@ -42,7 +43,7 @@ namespace ICS2Coop
         WatchAnim = 64,      // a scene animator's parameters changed (doors, trays ...), both ways
         WatchField = 65,     // a watched field changed (tip box, cash register, fridge ...), both ways
         WatchActive = 66,    // a watched scene object was shown / hidden (shop shelves ...), both ways
-        Elevators = 67,      // host -> guests: elevator car positions (unreliable, 2/s)
+        Elevators = 67,      // host -> guests: elevator cars: position, moving, direction (unreliable, 20/s while one moves)
         Dirt = 68,           // host -> joining guest: the dirt on the floor
     }
 
@@ -50,7 +51,7 @@ namespace ICS2Coop
     /// game: it connects players, finds hosts on the LAN and moves typed messages. The host is player 0.
     public sealed class CoopNet : INetEventListener
     {
-        public const int ProtocolVersion = 2;
+        public const int ProtocolVersion = 3;
         public const int DefaultPort = 27815;
         const string ConnectKey = "ics2coop/";
         const string DiscoverAsk = "ICS2COOP?";

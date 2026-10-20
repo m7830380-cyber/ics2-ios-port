@@ -31,6 +31,10 @@ namespace ICS2Coop
         public byte Pose;             // PlayerPoses
         public float SeatX, SeatY, SeatZ, SeatYaw;
         public byte Punches;          // counts up with every punch (the receiver plays one per step)
+        public byte Lift;             // standing in elevator car Lift (NoLift: none); LiftY = height above the car
+        public float LiftY;
+
+        public const byte NoLift = 255;
 
         public void Write(NetDataWriter w)
         {
@@ -42,6 +46,8 @@ namespace ICS2Coop
             w.Put(Pose);
             if (Pose != PlayerPoses.Stand) { w.Put(SeatX); w.Put(SeatY); w.Put(SeatZ); w.Put(SeatYaw); }
             w.Put(Punches);
+            w.Put(Lift);
+            if (Lift != NoLift) w.Put(LiftY);
         }
 
         public static PlayerState Read(NetDataReader r)
@@ -57,6 +63,8 @@ namespace ICS2Coop
             };
             if (s.Pose != PlayerPoses.Stand) { s.SeatX = r.GetFloat(); s.SeatY = r.GetFloat(); s.SeatZ = r.GetFloat(); s.SeatYaw = r.GetFloat(); }
             s.Punches = r.GetByte();
+            s.Lift = r.GetByte();
+            if (s.Lift != NoLift) s.LiftY = r.GetFloat();
             return s;
         }
     }

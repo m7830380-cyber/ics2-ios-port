@@ -72,7 +72,7 @@ static class Program
             if (!NoInputRedirect.Contains(asm.Name.Name))
                 n += RedirectInput(ctx);
             if (asm.Name.Name == "Assembly-CSharp")
-                n += PatchGame(ctx) + CoopHooks.PatchCalls(ctx);
+                n += PatchGame(ctx) + CoopHooks.PatchCalls(ctx) + CoopHooks.PatchFightTarget(ctx);
             if (asm.Name.Name == "FileBasedPrefs")
                 n += CoopHooks.PatchPrefs(ctx);
             total += n;

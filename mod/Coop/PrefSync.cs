@@ -8,8 +8,8 @@ namespace ICS2iOS
 {
     // The game keeps its progress in FBPP (quests, rooms bought, skills, coins, family, staff, the in-game
     // PC's apps ...). Every write on one device is sent to the others (the patched FileBasedPrefs reports it),
-    // a few times a second, last value per key. Not shared: each device's own settings, its inventory, and the
-    // per-item save slots (items have their own sync).
+    // a few times a second, last value per key. Not shared: each device's own settings, its inventory, the
+    // player's own body (energy, hunger, sleep), and the per-item save slots (items have their own sync).
     public class PrefSync : MonoBehaviour
     {
         const float SendInterval = 0.15f;
@@ -30,7 +30,7 @@ namespace ICS2iOS
             "TextureResolution", "VSync", "Vignette", "stSSR",
         };
 
-        static readonly string[] LocalPrefixes = { "option", "saveslot" };
+        static readonly string[] LocalPrefixes = { "option", "saveslot", "playerstat" };
 
         /// The item save slots ("posX12" ...) and delivery box slots ("zamboxPosX3" ...).
         static readonly string[] SlotPrefixes =

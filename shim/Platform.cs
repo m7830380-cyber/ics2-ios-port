@@ -81,6 +81,12 @@ namespace ICS2Shim
         public static Func<object, string, object[], bool> CallHandler;
         public static bool Call(object self, string action, object[] args) => CallHandler != null && CallHandler(self, action, args);
 
+        /// Co-op: who a fighting customer goes for. The patched Civil.Update reads the player through this, so the
+        /// mod can hand it the nearest player's body instead of always the host's own.
+        public static Func<UnityEngine.Transform, object, UnityEngine.Transform> FightTargetHandler;
+        public static UnityEngine.Transform FightTarget(UnityEngine.Transform player, object civil) =>
+            CoopActive && FightTargetHandler != null ? FightTargetHandler(player, civil) : player;
+
         /// How many hooked methods are running on the stack (the patched methods call CallEnter / CallExit
         /// around their body). A hooked method called from inside another one that is already mirrored on the
         /// other devices (CoveredDepth) is not sent again: the outer call's replay does it there.

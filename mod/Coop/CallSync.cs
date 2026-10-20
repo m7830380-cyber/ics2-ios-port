@@ -21,11 +21,14 @@ namespace ICS2iOS
     //   HostEcho    a guest runs it as before (the game's own guest path sends it to the host); when the host
     //               runs it, the guests replay it (a customer's PC switching on).
     //   Punch       a guest's punch hit one of the host's people: the host runs the hit.
+    //   HostAlways  only the host runs it, even inside a replay (elevator trips: a guest's car follows the host's,
+    //               see StateWatch).
+    //   Hit         a fighting customer's blow: the host gives it to the player it went for (FightSync).
     // A replay never changes money (the device that made the call already counted it) and its FBPP writes are
     // not sent again. Calls made inside a call that is already being replayed elsewhere are not sent again.
     public class CallSync : MonoBehaviour
     {
-        enum Rule { Mirror, Host, HostReplay, HostOnly, HostEcho, Punch }
+        enum Rule { Mirror, Host, HostReplay, HostOnly, HostEcho, Punch, HostAlways, Hit }
 
         static readonly Dictionary<string, Rule> Rules = new Dictionary<string, Rule>
         {
@@ -36,6 +39,7 @@ namespace ICS2iOS
             ["CivilManager.OpenShop"] = Rule.Mirror, ["CivilManager.CloseShop"] = Rule.Mirror,
             ["OpenCloseSwitch.Clicked"] = Rule.Mirror, ["OpenCloseSwitch.ForceCloseSwitch"] = Rule.Mirror,
             ["OldElevator.ElevatorButton.Press"] = Rule.Mirror, ["OldElevator.DoorTrigger.Toggle"] = Rule.Mirror,
+            ["OldElevator.ElevatorBrain.GoToPosition"] = Rule.HostAlways, ["OldElevator.ElevatorBrain.EmergencyStopBegin"] = Rule.HostAlways,
             ["Toaster.AddBread"] = Rule.Host, ["Toaster.StartToast"] = Rule.Host,
             ["CoffeeMachine.JugDropped"] = Rule.Mirror, ["CoffeeMachine.StartThePourCoffee"] = Rule.Mirror,
             ["CoffeeCup.Fill"] = Rule.Mirror, ["Oven.StartCookingButton"] = Rule.Mirror, ["Oven.StopCookingButton"] = Rule.Mirror,
@@ -75,6 +79,7 @@ namespace ICS2iOS
             ["Cabin.SetCivilAnimAndPos"] = Rule.HostReplay, ["Cabin.UpgradeCabin"] = Rule.Mirror,
             ["Civil.PunchSimulate"] = Rule.Host, ["Robber.PunchSimulate"] = Rule.Host, ["Bomberman.PunchRagdoll"] = Rule.Host,
             ["Robber.OnTriggerEnter"] = Rule.Punch, ["Bomberman.OnTriggerEnter"] = Rule.Punch, ["Civil.OnTriggerEnter"] = Rule.Punch,
+            ["Civil.Attacked"] = Rule.Hit,
         };
 
         static bool s_Replaying;          // running a call that came from another device
@@ -95,9 +100,13 @@ namespace ICS2iOS
         static bool OnCall(object self, string action, object[] args)
         {
             if (!CoopSession.Active || CoopSession.Net.LocalId < 0) return false;
-            if (s_Replaying) return false;                          // the replay itself runs
             if (!Rules.TryGetValue(action, out var rule)) return false;
             bool guest = CoopSession.IsClient;
+            // a guest's copy of the customer plays the host's blows (animation events still reach its switched-off
+            // script): the host already gave that blow to whoever it hit
+            if (rule == Rule.Hit) return guest || FightSync.HostHit(self as Civil);
+            if (rule == Rule.HostAlways) return guest && CoopSession.WorldReady;
+            if (s_Replaying) return false;                          // the replay itself runs
             // part of a call replayed elsewhere, or the game setting itself up while it loads
             bool covered = Platform.Covered || !CoopSession.WorldReady;
             try

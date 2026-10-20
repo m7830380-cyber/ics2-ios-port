@@ -389,7 +389,7 @@ static partial class Program
 
     static void SendState(int player, float time, float[] p, float yaw, int to = 0)
     {
-        var s = new PlayerState { Player = player, Time = time, X = p[0], Y = p[1], Z = p[2], Yaw = yaw };
+        var s = new PlayerState { Player = player, Time = time, X = p[0], Y = p[1], Z = p[2], Yaw = yaw, Lift = PlayerState.NoLift };
         s.Write(s_Net.Begin(Msg.PlayerState));
         s_Net.SendTo(to, DeliveryMethod.Sequenced);
     }

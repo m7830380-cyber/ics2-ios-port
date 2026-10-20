@@ -16,8 +16,8 @@ namespace ICS2iOS
     //  * values the game keeps in fields: tip box, cash registers, fridge, coffee jugs, fires, horse bets,
     //    lights, power, shop open, air conditioners, fans, extinguishers, rooms bought, the cafe's smell.
     //  * whether shop shelves and other interactive scene objects are shown.
-    // Host only: elevator cars where the host has them (each device runs the elevator from the same button
-    // presses; this removes any drift once the car stops), and the dirt already on the floor when a guest joins.
+    // Host only: elevator cars (only the host's travel; a guest's cars follow them, see below), and the dirt
+    // already on the floor when a guest joins.
     public class StateWatch : MonoBehaviour
     {
         const float ScanInterval = 0.25f, RebindInterval = 4f;
@@ -69,6 +69,7 @@ namespace ICS2iOS
             s_Anims.Clear(); s_Fields.Clear(); s_Actives.Clear();
             s_AnimByRef.Clear(); s_ActiveByRef.Clear(); s_FieldByKey.Clear();
             s_Elevators = null;
+            s_Follow.Clear();
         }
 
         static bool Ready => CoopSession.WorldReady && CoopSession.Net.PlayerCount >= 2;
@@ -79,7 +80,7 @@ namespace ICS2iOS
             float now = Time.unscaledTime;
             if (now >= m_NextBind) { m_NextBind = now + RebindInterval; Bind(); }
             if (now >= m_NextScan) { m_NextScan = now + ScanInterval; Scan(); }
-            if (CoopSession.IsHost && now >= m_NextElevator) { m_NextElevator = now + 0.5f; SendElevators(); }
+            UpdateElevators(now);
         }
 
         // ---- what is watched -------------------------------------------------------------------------------
@@ -263,6 +264,23 @@ namespace ICS2iOS
         }
 
         // ---- elevators (host -> guests) -------------------------------------------------------------------------
+        // Only the host's elevators travel (a guest's GoToPosition / EmergencyStopBegin are dropped, CallSync
+        // HostAlways): the host sends each car's position 20 times a second while one moves, and a guest's car
+        // follows it smoothly, carrying the guest's body when it stands in it. The guest's ElevatorBrain is kept
+        // "moving" at zero speed meanwhile, so its doors, buttons and lights behave as during a trip.
+        sealed class CarFollow
+        {
+            public Vector3 Pos, Vel;      // host's last position and speed
+            public float At;              // when it arrived (local unscaled time)
+            public bool Moving;
+            public int Dir;
+        }
+
+        static readonly Dictionary<int, CarFollow> s_Follow = new Dictionary<int, CarFollow>();
+        static float s_LastMoving = -10f;
+        static FieldInfo s_Dir, s_Speed, s_DistToFloor;
+        static MethodInfo s_DoorLocks, s_CallerLights;
+
         static object[] Elevators()
         {
             if (s_Elevators != null) return s_Elevators;
@@ -270,11 +288,52 @@ namespace ICS2iOS
             if (type == null) return s_Elevators = new object[0];
             var list = new List<object>(FindObjectsOfType(type, true));
             list.Sort((a, b) => string.CompareOrdinal(NetRef.PathOf(((Component)a).transform), NetRef.PathOf(((Component)b).transform)));
+            const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            s_Dir = type.GetField("direction", all);
+            s_Speed = type.GetField("currentSpeed", all);
+            s_DistToFloor = type.GetField("distToFloor", all);
+            s_DoorLocks = type.GetMethod("UpdateDoorLocks", all);
+            s_CallerLights = type.GetMethod("UpdateCallersLights", all);
             return s_Elevators = list.ToArray();
         }
 
         static Transform Car(object brain) => brain.GetType().GetField("elevator")?.GetValue(brain) as Transform;
         static bool Moving(object brain) => brain.GetType().GetField("moving")?.GetValue(brain) is bool b && b;
+
+        /// The elevator car whose floor is under this body (index into Elevators()), or -1.
+        public static int CarUnder(Vector3 bodyPos, out Transform car)
+        {
+            car = null;
+            var all = Elevators();
+            if (all.Length == 0) return -1;
+            foreach (var hit in Physics.RaycastAll(bodyPos, Vector3.down, 2.5f, ~0, QueryTriggerInteraction.Ignore))
+                for (int i = 0; i < all.Length; i++)
+                {
+                    var c = Car(all[i]);
+                    if (c != null && hit.transform.IsChildOf(c)) { car = c; return i; }
+                }
+            return -1;
+        }
+
+        public static Transform CarAt(int index)
+        {
+            var all = Elevators();
+            return index >= 0 && index < all.Length ? Car(all[index]) : null;
+        }
+
+        void UpdateElevators(float now)
+        {
+            if (CoopSession.IsHost)
+            {
+                bool anyMoving = false;
+                foreach (var b in Elevators()) if (Moving(b)) { anyMoving = true; break; }
+                if (anyMoving) s_LastMoving = now;
+                // fast while a car moves (and a moment after, so the stop arrives), slow otherwise
+                float interval = now - s_LastMoving < 1f ? 0.05f : 0.5f;
+                if (now >= m_NextElevator) { m_NextElevator = now + interval; SendElevators(); }
+            }
+            else FollowElevators(now);
+        }
 
         static void SendElevators()
         {
@@ -288,34 +347,101 @@ namespace ICS2iOS
                 var p = car != null ? car.position : Vector3.zero;
                 w.Put(p.x); w.Put(p.y); w.Put(p.z);
                 w.Put(Moving(b));
+                w.Put((sbyte)(s_Dir != null ? (int)s_Dir.GetValue(b) : 0));
             }
-            CoopSession.Net.SendAll(DeliveryMethod.Unreliable);
+            CoopSession.Net.SendAll(DeliveryMethod.Sequenced);
         }
 
         static void ApplyElevators(NetDataReader r)
         {
             var all = Elevators();
             int n = r.GetByte();
+            float now = Time.unscaledTime;
             for (int i = 0; i < n; i++)
             {
                 var p = new Vector3(r.GetFloat(), r.GetFloat(), r.GetFloat());
                 bool moving = r.GetBool();
+                int dir = r.GetSByte();
                 if (i >= all.Length) continue;
-                var car = Car(all[i]);
-                if (car == null || moving || Moving(all[i])) continue;
-                var d = p - car.position;
-                if (d.sqrMagnitude < 0.0004f) continue;
-                // a stopped car somewhere else than on the host: put it there (and whoever stands in it)
-                var gm = GameManager.Instance;
-                if (gm.player != null && (gm.player.position - car.position).sqrMagnitude < 4f && Mathf.Abs(d.y) < 6f)
+                if (!s_Follow.TryGetValue(i, out var f))
                 {
-                    var cc = gm.player.GetComponent<CharacterController>();
-                    if (cc != null) cc.enabled = false;
-                    gm.player.position += d;
-                    if (cc != null) cc.enabled = true;
+                    f = new CarFollow { Pos = p, At = now };
+                    s_Follow[i] = f;
                 }
-                car.position = p;
+                float dt = now - f.At;
+                f.Vel = moving && f.Moving && dt > 0.01f && dt < 0.5f ? (p - f.Pos) / dt : Vector3.zero;
+                f.Pos = p;
+                f.At = now;
+                if (moving != f.Moving) TripChanged(all[i], moving, dir);
+                f.Moving = moving;
+                f.Dir = dir;
             }
+        }
+
+        /// Guest: the host's car started or stopped: the same sounds, lights and door locks here.
+        static void TripChanged(object brain, bool moving, int dir)
+        {
+            var type = brain.GetType();
+            try
+            {
+                type.GetField("moving")?.SetValue(brain, moving);
+                s_Dir?.SetValue(brain, dir);
+                if (moving) (type.GetField("travelSound")?.GetValue(brain) as AudioSource)?.Play();
+                else
+                {
+                    (type.GetField("travelSound")?.GetValue(brain) as AudioSource)?.Stop();
+                    (type.GetField("breaksSound")?.GetValue(brain) as AudioSource)?.Stop();
+                    (type.GetField("stopSound")?.GetValue(brain) as AudioSource)?.Play();
+                    s_DoorLocks?.Invoke(brain, new object[] { false });
+                }
+                s_CallerLights?.Invoke(brain, null);
+            }
+            catch (Exception e) { Log.Warn("coop: elevator " + ((Component)brain).name + ": " + e.Message); }
+        }
+
+        /// Guest, every frame: each car goes where the host has it (predicted a little ahead while moving), and
+        /// takes the player standing in it along.
+        static void FollowElevators(float now)
+        {
+            var all = Elevators();
+            var gm = GameManager.Instance;
+            foreach (var kv in s_Follow)
+            {
+                if (kv.Key >= all.Length) continue;
+                var brain = all[kv.Key];
+                var car = Car(brain);
+                if (car == null) continue;
+                var f = kv.Value;
+                if (f.Moving)
+                {
+                    // the brain stays "moving" but does not move the car itself
+                    var type = brain.GetType();
+                    type.GetField("moving")?.SetValue(brain, true);
+                    s_Speed?.SetValue(brain, 0f);
+                    s_Dir?.SetValue(brain, f.Dir);
+                    type.GetField("destination")?.SetValue(brain, new Vector3(car.position.x, f.Dir >= 0 ? 1e6f : -1e6f, car.position.z));
+                }
+                var target = f.Pos + f.Vel * Mathf.Min(now - f.At, 0.15f);
+                var d = target - car.position;
+                if (d.sqrMagnitude < 1e-6f) continue;
+                if (!f.Moving && d.sqrMagnitude > 36f) { car.position = target; continue; }  // far away: just put it there
+                if (gm != null && gm.player != null && Standing(brain, gm.player, car))
+                {
+                    gm.player.position += d;
+                    car.position = target;
+                    Physics.SyncTransforms();     // the character controller must see where it is now
+                    continue;
+                }
+                car.position = target;
+            }
+        }
+
+        static bool Standing(object brain, Transform player, Transform car)
+        {
+            float reach = s_DistToFloor != null ? (float)s_DistToFloor.GetValue(brain) + 0.6f : 1.6f;
+            foreach (var hit in Physics.RaycastAll(player.position, Vector3.down, reach, ~0, QueryTriggerInteraction.Ignore))
+                if (hit.transform.IsChildOf(car)) return true;
+            return false;
         }
 
         // ---- dirt already on the floor when a guest joins (host -> guest) ----------------------------------------

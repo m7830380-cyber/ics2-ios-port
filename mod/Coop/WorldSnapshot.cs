@@ -143,8 +143,10 @@ namespace ICS2iOS
             FBPP.GetString("language"); // reload now
         }
 
-        /// This device's settings (language, graphics, volume ...): the guest keeps its own.
-        static bool IsLocalKey(string key) => PrefSync.IsDeviceSetting(key);
+        /// This device's settings (language, graphics, volume ...) and the player's own energy, hunger and sleep:
+        /// the guest keeps its own.
+        static bool IsLocalKey(string key) =>
+            PrefSync.IsDeviceSetting(key) || key.StartsWith("playerstat", StringComparison.Ordinal);
 
         /// The inventory is each player's own: a guest starts the session with empty pockets (taking the host's
         /// would copy the host's things).

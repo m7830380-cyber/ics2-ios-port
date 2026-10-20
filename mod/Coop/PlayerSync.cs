@@ -12,6 +12,8 @@ namespace ICS2iOS
     // Poses: someone at a PC (their camera zooms into the screen; the others see them sitting on the chair),
     // on the strip club couch or at the blackjack table sits there, someone in bed lies down, punches show.
     // Remote players also open the cafe's sliding doors on each device (the doors only react to local bodies).
+    // Someone riding an elevator is placed by their height above the car, so they ride along on every screen
+    // even though each device's car is a moment ahead or behind.
     public class PlayerSync : MonoBehaviour
     {
         const float SendInterval = 0.05f;
@@ -22,6 +24,7 @@ namespace ICS2iOS
             public int Player;
             public string Name;
             public GameObject Body;
+            public Transform Target;       // where the body's character controller would be (fighting customers aim here)
             public Animator Anim;
             public readonly List<PlayerState> Snapshots = new List<PlayerState>();
             public float ClockOffset;      // local time - sender time, smoothed
@@ -62,6 +65,7 @@ namespace ICS2iOS
         {
             if (!s_Puppets.TryGetValue(id, out var p)) return;
             if (p.Body != null) Destroy(p.Body);
+            if (p.Target != null) Destroy(p.Target.gameObject);
             s_Puppets.Remove(id);
             Log.Info($"coop: removed puppet of player {id}");
         }
@@ -209,6 +213,7 @@ namespace ICS2iOS
             if (ray != null && ray.freezed) flags |= PlayerFlags.Frozen;
             if (ray != null && ray.currentPlayerComputer != null && ray.currentPlayerComputer.enterPc) flags |= PlayerFlags.AtComputer;
             byte pose = LocalPose(gm, out var seat, out float seatYaw);
+            int lift = StateWatch.CarUnder(t.position, out var car);
             var s = new PlayerState
             {
                 Player = CoopSession.Net.LocalId,
@@ -217,6 +222,8 @@ namespace ICS2iOS
                 Yaw = t.eulerAngles.y, Pitch = pitch, Flags = flags,
                 Pose = pose, SeatX = seat.x, SeatY = seat.y, SeatZ = seat.z, SeatYaw = seatYaw,
                 Punches = s_Punches,
+                Lift = lift >= 0 && lift < PlayerState.NoLift ? (byte)lift : PlayerState.NoLift,
+                LiftY = car != null ? t.position.y - car.position.y : 0f,
             };
             var w = CoopSession.Net.Begin(Msg.PlayerState);
             s.Write(w);
@@ -234,9 +241,16 @@ namespace ICS2iOS
             float k = b.Time > a.Time ? Mathf.Clamp01((renderTime - a.Time) / (b.Time - a.Time)) : 1f;
             var pos = Vector3.Lerp(new Vector3(a.X, a.Y, a.Z), new Vector3(b.X, b.Y, b.Z), k);
             float yaw = Mathf.LerpAngle(a.Yaw, b.Yaw, k);
+            // in an elevator: on this device's car, at the height they have above theirs
+            if (a.Lift != PlayerState.NoLift && a.Lift == b.Lift)
+            {
+                var car = StateWatch.CarAt(a.Lift);
+                if (car != null) pos.y = car.position.y + Mathf.Lerp(a.LiftY, b.LiftY, k);
+            }
 
             var tr = p.Body.transform;
             var latest = p.Latest;
+            if (p.Target != null) p.Target.position = pos;
             if (latest.Pose != PlayerPoses.Stand)
             {
                 // sitting / lying where the seat is (the player's own body did not move there)
@@ -295,6 +309,7 @@ namespace ICS2iOS
             var body = MakeBody(player);
             if (body == null) return null;
             p = new Puppet { Player = player, Name = CoopSession.Net.NameOf(player), Body = body, Anim = body.GetComponentInChildren<Animator>() };
+            p.Target = new GameObject("CoopTarget" + player).transform;
             s_Puppets[player] = p;
             Log.Info($"coop: created puppet for player {player} '{p.Name}' from '{body.name}'");
             return p;
@@ -341,6 +356,16 @@ namespace ICS2iOS
         }
 
         public static GameObject PuppetBody(int player) => s_Puppets.TryGetValue(player, out var p) ? p.Body : null;
+
+        /// Remote players' bodies, as the game's player transform would be (character controller centre).
+        public static IEnumerable<KeyValuePair<int, Transform>> Targets()
+        {
+            foreach (var p in s_Puppets.Values)
+                if (p.Target != null && p.Body != null && p.Body.activeInHierarchy && p.Snapshots.Count > 0)
+                    yield return new KeyValuePair<int, Transform>(p.Player, p.Target);
+        }
+
+        public static Transform TargetOf(int player) => s_Puppets.TryGetValue(player, out var p) ? p.Target : null;
 
         public static GameObject FirstPuppetBody()
         {

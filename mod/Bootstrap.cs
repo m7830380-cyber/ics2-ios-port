@@ -90,6 +90,7 @@ namespace ICS2iOS
                 go.AddComponent<ItemSync>();
                 go.AddComponent<CustomerSync>();
                 go.AddComponent<CallSync>();
+                go.AddComponent<FightSync>();
                 go.AddComponent<PrefSync>();
                 go.AddComponent<ActorSync>();
                 go.AddComponent<StateWatch>();

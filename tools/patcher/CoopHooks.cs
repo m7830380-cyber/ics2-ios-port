@@ -20,6 +20,7 @@ static class CoopHooks
         "CivilManager.OpenShop", "CivilManager.CloseShop", "OpenCloseSwitch.Clicked", "OpenCloseSwitch.ForceCloseSwitch",
         // elevators
         "OldElevator.ElevatorButton.Press", "OldElevator.DoorTrigger.Toggle",
+        "OldElevator.ElevatorBrain.GoToPosition", "OldElevator.ElevatorBrain.EmergencyStopBegin",
         // kitchen and appliances
         "Toaster.AddBread", "Toaster.StartToast", "CoffeeMachine.JugDropped", "CoffeeMachine.StartThePourCoffee",
         "CoffeeCup.Fill", "Oven.StartCookingButton", "Oven.StopCookingButton", "HomeFridge.AddFood", "HomeFridge.MinesFood",
@@ -52,7 +53,34 @@ static class CoopHooks
         "Civil.PunchSimulate", "Robber.PunchSimulate", "Bomberman.PunchRagdoll",
         // a guest's punches land on the host's people
         "Robber.OnTriggerEnter", "Bomberman.OnTriggerEnter", "Civil.OnTriggerEnter",
+        // a fighting customer's blow (animation event): the host decides whose body it hits
+        "Civil.Attacked",
     };
+
+    /// Civil.Update reads GameManager.player (the one to chase and hit when fighting) through
+    /// Platform.FightTarget(player, this), so in co-op the customer can go for the nearest player.
+    public static int PatchFightTarget(Program.Ctx c)
+    {
+        var civil = c.Mod.GetType("Civil");
+        var update = civil?.Methods.FirstOrDefault(x => x.Name == "Update" && x.HasBody && x.Parameters.Count == 0);
+        if (update == null) { c.Fail("Civil.Update missing (fight target)"); return 0; }
+        var target = c.ShimMethod("Platform", "FightTarget", "UnityEngine.Transform", "System.Object");
+        update.Body.SimplifyMacros();   // short branches may no longer reach
+        var il = update.Body.GetILProcessor();
+        int n = 0;
+        foreach (var ins in update.Body.Instructions.ToList())
+        {
+            if (ins.OpCode != OpCodes.Ldfld || !(ins.Operand is FieldReference f)) continue;
+            if (f.Name != "player" || f.DeclaringType.FullName != "GameManager") continue;
+            var call = il.Create(OpCodes.Call, target);
+            il.InsertAfter(ins, call);
+            il.InsertAfter(ins, il.Create(OpCodes.Ldarg_0));
+            n++;
+        }
+        update.Body.OptimizeMacros();
+        if (n != 2) c.Fail($"Civil.Update: {n} reads of GameManager.player (expected 2)");
+        return n > 0 ? 1 : 0;
+    }
 
     public static int PatchPrefs(Program.Ctx c)
     {

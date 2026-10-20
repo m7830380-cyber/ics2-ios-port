@@ -44,6 +44,7 @@ namespace ICS2iOS
             ActorSync.Report(sb, Detail(detail, "actors"));
             CallSync.Report(sb);
             PrefSync.Report(sb);
+            FightSync.Report(sb);
             StateWatch.Report(sb);
             Line(sb, "items.tableTag", TableTag());
             Line(sb, "items.any", ItemSync.AnyWorldItemId().ToString(Inv));
