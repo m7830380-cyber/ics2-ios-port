@@ -151,7 +151,7 @@ namespace ICS2iOS
             var last = s_Rows[s_Rows.Count - 1].Rect;
             GUI.Label(new Rect(last.x, last.yMax + h * 0.01f, last.width, h - last.yMax),
                 "Low quality turns off shadows and post effects; a lower resolution saves battery. The game's own options " +
-                "(language, sound, mouse sensitivity) are in its Settings menu. Log file: Files > On My iPhone > " +
+                "(language, sound) are in its Settings menu. Log file: Files > On My iPhone > " +
                 "Internet Cafe Simulator 2 > InternetCafeSim2-iOS.log (or tap the FPS counter).", m_Small);
             GUI.color = Color.white;
         }

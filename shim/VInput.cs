@@ -174,11 +174,21 @@ namespace ICS2Shim
 
         static float Combine(float real, float virt) => Mathf.Abs(virt) > Mathf.Abs(real) ? virt : real;
 
+        // On a phone Unity feeds every finger's movement into the real "Mouse X"/"Mouse Y" axes (even with
+        // simulateMouseWithTouches off), so the movement-stick finger would also turn the camera and the look
+        // finger would count twice. There the touch layer is the only source of mouse axes.
+        static readonly bool s_MobileMouseAxes = Application.isMobilePlatform;
+        static float RealAxis(string axis, bool raw)
+        {
+            if (s_MobileMouseAxes && (axis == "Mouse X" || axis == "Mouse Y")) return 0f;
+            return raw ? Input.GetAxisRaw(axis) : Input.GetAxis(axis);
+        }
+
         public static float GetAxis(string axis)
         {
             if (!Virtual) return Input.GetAxis(axis);
             if (axis == "Mouse ScrollWheel") return scrollThisFrame.y * 0.1f + Input.GetAxis(axis);
-            return Combine(Input.GetAxis(axis), VirtualAxis(axis));
+            return Combine(RealAxis(axis, false), VirtualAxis(axis));
         }
         public static float GetAxisRaw(string axis)
         {
@@ -186,7 +196,7 @@ namespace ICS2Shim
             if (axis == "Mouse ScrollWheel") return scrollThisFrame.y * 0.1f + Input.GetAxisRaw(axis);
             float v = VirtualAxis(axis);
             if (axis == "Horizontal" || axis == "Vertical") v = v > 0.2f ? 1f : v < -0.2f ? -1f : 0f;
-            return Combine(Input.GetAxisRaw(axis), v);
+            return Combine(RealAxis(axis, true), v);
         }
 
         // Input Manager buttons and the keys/mouse buttons they are bound to in the retail InputManager.

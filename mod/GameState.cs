@@ -25,6 +25,33 @@ namespace ICS2iOS
             }
         }
 
+        static VHS.InputHandler s_Input;
+        static VHS.CameraController s_Camera;
+        static float s_NextLookSearch;
+        static bool s_LoggedLook;
+
+        /// The "Mouse X"/"Mouse Y" value that turns the player's camera by <paramref name="degrees"/> this frame.
+        /// The game multiplies the axis by InputHandler.sensitivity, CameraController.sensitivity and
+        /// Time.deltaTime, so those are divided out here: touch look then turns by a fixed angle per point
+        /// dragged, whatever the frame rate or the game's own sensitivity values.
+        public static float LookAxis(float degrees, bool vertical = false)
+        {
+            if ((s_Input == null || s_Camera == null) && Time.unscaledTime >= s_NextLookSearch)
+            {
+                s_NextLookSearch = Time.unscaledTime + 0.5f;
+                s_Input = UnityEngine.Object.FindObjectOfType<VHS.InputHandler>();
+                s_Camera = UnityEngine.Object.FindObjectOfType<VHS.CameraController>();
+            }
+            float gain = (s_Input != null ? s_Input.sensitivity : 1.25f) * (s_Camera != null ? (vertical ? s_Camera.sensitivity.y : s_Camera.sensitivity.x) : 100f);
+            if (!s_LoggedLook && s_Input != null && s_Camera != null)
+            {
+                s_LoggedLook = true;
+                Log.Info($"look gain: input sensitivity {s_Input.sensitivity}, camera sensitivity {s_Camera.sensitivity}");
+            }
+            float dt = Mathf.Max(Time.deltaTime, 1f / 240f);
+            return degrees / (Mathf.Max(0.01f, Mathf.Abs(gain)) * dt);
+        }
+
         public static Mode Current { get; private set; } = Mode.Menu;
         public static bool Paused { get; private set; }
         public static bool AtComputer { get; private set; }

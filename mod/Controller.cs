@@ -97,10 +97,10 @@ namespace ICS2iOS
                 s_StickWasActive = l != Vector2.zero;
                 if (r != Vector2.zero)
                 {
-                    // ~180 degrees/s at full tilt with the default sensitivity (same scale as touch look)
-                    float k = 9f * IosSettings.LookSensitivity;
-                    VInput.AddFrameAxis("Mouse X", r.x * r.magnitude * k);
-                    VInput.AddFrameAxis("Mouse Y", r.y * r.magnitude * k * (IosSettings.InvertLook ? -1f : 1f));
+                    // ~180 degrees/s at full tilt with the default sensitivity
+                    float deg = 180f * IosSettings.LookSensitivity * Time.deltaTime;
+                    VInput.AddFrameAxis("Mouse X", GameState.LookAxis(r.x * r.magnitude * deg));
+                    VInput.AddFrameAxis("Mouse Y", GameState.LookAxis(r.y * r.magnitude * deg, true) * (IosSettings.InvertLook ? -1f : 1f));
                 }
             }
             else

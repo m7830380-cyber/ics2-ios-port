@@ -34,6 +34,8 @@ namespace ICS2iOS
         public static Vector2 StickOrigin { get; private set; }
         public static Vector2 StickKnob { get; private set; }
         public static float StickRadius => TouchHud.Unit * 0.9f;
+        /// Camera turn per point dragged at look sensitivity 1 (a drag across the whole screen is ~200 degrees).
+        const float DegreesPerPoint = 0.22f;
 
         public static void Tick()
         {
@@ -137,13 +139,11 @@ namespace ICS2iOS
                 case Role.Look:
                 {
                     Vector2 d = p - f.Last;
-                    // pixels -> points, then scaled so the game's own sensitivity (and its Time.deltaTime
-                    // factor) still apply: the result is a rotation per point that does not depend on the fps
+                    // pixels -> points; at sensitivity 1 a drag of one point turns the view by DegreesPerPoint
                     float points = Mathf.Max(1f, Screen.dpi / 163f);
-                    float dt = Mathf.Max(Time.unscaledDeltaTime, 1f / 240f);
-                    float k = 0.2f * IosSettings.LookSensitivity / (points * dt * 60f);
-                    VInput.AddFrameAxis("Mouse X", d.x * k);
-                    VInput.AddFrameAxis("Mouse Y", d.y * k * (IosSettings.InvertLook ? -1f : 1f));
+                    float deg = DegreesPerPoint * IosSettings.LookSensitivity / points;
+                    VInput.AddFrameAxis("Mouse X", GameState.LookAxis(d.x * deg));
+                    VInput.AddFrameAxis("Mouse Y", GameState.LookAxis(d.y * deg, true) * (IosSettings.InvertLook ? -1f : 1f));
                     break;
                 }
                 case Role.Mouse:
