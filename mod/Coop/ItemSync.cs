@@ -765,6 +765,12 @@ namespace ICS2iOS
             return any;
         }
 
+        public static int IdOf(GameObject go)
+        {
+            var t = go != null ? go.GetComponent<CoopItemId>() : null;
+            return t != null ? t.Id : 0;
+        }
+
         public static GameObject Get(int id) => s_Objects.TryGetValue(id, out var t) && t != null ? t.gameObject : null;
     }
 }

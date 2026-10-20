@@ -381,6 +381,29 @@ static class Program
         })
             n += GuardGuest(c, mod.GetType(type), method);
 
+        // --- co-op: guest actions on the host's customers go to the host --------------------------------
+        foreach (var (type, method) in new[]
+        {
+            ("TableController", "Approved"),            // PC request approved in the CafeSoft app
+            ("TableController", "ExtraTimeApproved"),   // extra time approved
+            ("TableController", "Canceled"),            // request refused
+            ("Civil", "TakedMoney"),                    // cash taken from a paying customer
+        })
+            n += ForwardGuest(c, mod.GetType(type), method);
+        {
+            var gen = mod.GetType("CafeSoftManager")?.Methods.FirstOrDefault(x => x.Name == "GenerateNotification");
+            if (gen == null) c.Fail("CafeSoftManager.GenerateNotification missing");
+            else
+            {
+                var il = gen.Body.GetILProcessor();
+                var first = gen.Body.Instructions[0];
+                for (int i = 1; i <= 5; i++) il.InsertBefore(first, il.Create(OpCodes.Ldarg, gen.Parameters[i - 1]));
+                il.InsertBefore(first, il.Create(OpCodes.Call, c.ShimMethod("Platform", "OnGenerateNotification",
+                    "System.Object", "System.String", "System.Single", "System.Int32", "System.String")));
+                n++;
+            }
+        }
+
         // --- Enviro sky: Blit(CameraTarget, CameraTarget, sky) reads the target it writes. Metal keeps the old
         // frames ("hall of mirrors"); the sky shader never samples its source, so Platform.SkyBlit blits black.
         {
@@ -425,6 +448,27 @@ static class Program
         var il = m.Body.GetILProcessor();
         var first = m.Body.Instructions[0];
         il.InsertBefore(first, il.Create(OpCodes.Call, c.ShimMethod("Platform", "get_IsCoopGuest")));
+        il.InsertBefore(first, il.Create(OpCodes.Brfalse, first));
+        il.InsertBefore(first, il.Create(OpCodes.Ret));
+        return 1;
+    }
+
+    /// Prepends `if (Platform.IsCoopGuest && Platform.Forward(this, "Type.Method", firstIntOrBoolArg)) return;`.
+    static int ForwardGuest(Ctx c, TypeDefinition t, string name)
+    {
+        var m = t?.Methods.FirstOrDefault(x => x.Name == name && x.ReturnType.FullName == "System.Void" && x.HasBody && !x.IsStatic);
+        if (m == null) { c.Fail($"{t?.Name}.{name} missing (guest forward)"); return 0; }
+        if (m.Parameters.Count > 1 || (m.Parameters.Count == 1 &&
+            m.Parameters[0].ParameterType.FullName != "System.Int32" && m.Parameters[0].ParameterType.FullName != "System.Boolean"))
+        { c.Fail($"{t.Name}.{name}: unexpected parameters for a guest forward"); return 0; }
+        var il = m.Body.GetILProcessor();
+        var first = m.Body.Instructions[0];
+        il.InsertBefore(first, il.Create(OpCodes.Call, c.ShimMethod("Platform", "get_IsCoopGuest")));
+        il.InsertBefore(first, il.Create(OpCodes.Brfalse, first));
+        il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+        il.InsertBefore(first, il.Create(OpCodes.Ldstr, t.Name + "." + name));
+        il.InsertBefore(first, m.Parameters.Count == 1 ? il.Create(OpCodes.Ldarg_1) : il.Create(OpCodes.Ldc_I4_0));
+        il.InsertBefore(first, il.Create(OpCodes.Call, c.ShimMethod("Platform", "Forward", "System.Object", "System.String", "System.Int32")));
         il.InsertBefore(first, il.Create(OpCodes.Brfalse, first));
         il.InsertBefore(first, il.Create(OpCodes.Ret));
         return 1;

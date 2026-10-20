@@ -29,6 +29,12 @@ namespace ICS2Coop
         ItemDestroy = 45, // id: gone (opened, eaten, sold, put into the inventory ...)
         BoxSpawn = 46,    // id, box prefab index, item tag, position, rotation: a delivery box arrived
         ShopOrder = 47,   // guest -> host: item tags ordered on the guest's in-game shop
+        CustomerStates = 50, // host -> guests: customers' position / animation / state (unreliable, chunks)
+        RequestOpen = 51,    // host -> guests: a customer asks to use a PC (table id, pc name, hours, extra, kind)
+        RequestClose = 52,   // host -> guests: that request is gone (answered, timed out)
+        RequestAnswer = 53,  // guest -> host: table id, 0 approve / 1 refuse
+        CustomerAction = 54, // guest -> host: customer index, action (1 = cash taken), argument
+        TableLinks = 55,     // host -> guests: which customer uses which PC table (1/s)
     }
 
     /// Network layer shared by the game (Unity) and the headless test bot (.NET). It knows nothing about the

@@ -65,6 +65,17 @@ namespace ICS2Shim
         /// only the host runs (customers arriving, crack orders, cabin income, day rollover).
         public static bool IsCoopGuest { get; set; }
 
+        /// Guest: actions on the host's world (approve a customer's PC, take a customer's cash ...) are sent to
+        /// the host instead of run locally. Returns true when the action was forwarded (the game method then
+        /// returns at once). Set by the co-op mod.
+        public static Func<object, string, int, bool> ForwardHandler;
+        public static bool Forward(object self, string action, int arg) => ForwardHandler != null && ForwardHandler(self, action, arg);
+
+        /// Host: CafeSoftManager.GenerateNotification was called (a customer asks to use a PC).
+        public static Action<object, string, float, int, string> NotificationGenerated;
+        public static void OnGenerateNotification(object table, string pcName, float timer, int extraTime, string message)
+            => NotificationGenerated?.Invoke(table, pcName, timer, extraTime, message);
+
         public const string DefaultSaveFileName = "save-data.save";
         public static string SaveFileName { get; set; } = DefaultSaveFileName;
 

@@ -48,6 +48,14 @@ static partial class Program
                 }
                 case "economy-host": EconomyHost(address, port, timeout); break;
                 case "items-host": ItemsHost(address, port, timeout, Flag(args, "--mutate")); break;
+                case "customers-host": CustomersHost(address, port, timeout, Flag(args, "--mutate")); break;
+                case "customers-guest":
+                {
+                    ListenItems();
+                    int guest = JoinGuest(port, timeout, Arg(args, "--fixture", "fixtures"), false);
+                    CustomersGuest(guest);
+                    break;
+                }
                 case "items-guest":
                 {
                     ListenItems();

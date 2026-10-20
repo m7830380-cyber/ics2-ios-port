@@ -37,9 +37,27 @@ namespace ICS2iOS
                 Line(sb, "time.hours", EnviroSky.instance.GameTime.Hours.ToString(Inv));
             PlayerSync.Report(sb);
             WorldSync.Report(sb);
-            ItemSync.Report(sb, detail.StartsWith("items=") ? detail.Substring(6) : "");
+            ItemSync.Report(sb, Detail(detail, "items"));
+            CustomerSync.Report(sb, Detail(detail, "civs"));
+            Line(sb, "items.tableTag", TableTag());
             Line(sb, "items.any", ItemSync.AnyWorldItemId().ToString(Inv));
             if (EnviroSky.instance != null) Line(sb, "time.hourf", EnviroSky.instance.internalHour.ToString("0.000", Inv));
+        }
+
+        /// "items=1,2;civs=3" -> Detail(.., "civs") = "3"
+        static string Detail(string detail, string key)
+        {
+            foreach (var part in (detail ?? "").Split(';'))
+                if (part.StartsWith(key + "=")) return part.Substring(key.Length + 1);
+            return "";
+        }
+
+        static string TableTag()
+        {
+            if (GameManager.Instance == null) return "";
+            foreach (var p in GameManager.Instance.allGamePrefabs)
+                if (p != null && p.GetComponent<TableController>() != null) return p.myItem.itemTag;
+            return "";
         }
 
         public static void Run(int from, string command, string arg)
@@ -107,6 +125,50 @@ namespace ICS2iOS
                     var zm = GameManager.Instance.zamazorManager;
                     zm.AddMyItemToBasket(GameManager.Instance.GiveMeItemObject(arg));
                     zm.CompletePayment();
+                    break;
+                }
+                case "forcepay":
+                {
+                    // host test: customer <i> waits to pay <price>
+                    var p = arg.Split(' ');
+                    var c = GameManager.Instance.civilManager.allCivils[int.Parse(p[0], Inv)];
+                    c.gameObject.SetActive(true);
+                    c.myEnum = CivilEnum.PayTime;
+                    c.payedPrice = float.Parse(p[1], Inv);
+                    break;
+                }
+                case "takecash":
+                {
+                    // what pressing E on a paying customer does (PlayerRay)
+                    var c = GameManager.Instance.civilManager.allCivils[int.Parse(arg, Inv)];
+                    if (c.myEnum == CivilEnum.PayTime && c.payedPrice > 0f)
+                    {
+                        GameManager.Instance.OpenMoneyAddedUI(c.payedPrice);
+                        GameManager.Instance.money += c.payedPrice;
+                        c.TakedMoney();
+                    }
+                    break;
+                }
+                case "notify":
+                {
+                    // host test: a customer asks for the PC at table <id>
+                    var t = ItemSync.Get(int.Parse(arg, Inv))?.GetComponent<TableController>();
+                    if (t != null) GameManager.Instance.cafeSoftManager.GenerateNotification(t, "PC 1", 1f);
+                    break;
+                }
+                case "approve":
+                {
+                    // the Approve button in the CafeSoft app (first open request)
+                    int found = 0;
+                    foreach (var t in Object.FindObjectsOfType<TableController>())
+                        if (t.myCustomerRequest != null)
+                        {
+                            found++;
+                            Log.Info($"test: approving the request on '{t.name}' (table '{t.myCustomerRequest.myTable?.name}')");
+                            t.myCustomerRequest.Approved();
+                            break;
+                        }
+                    if (found == 0) Log.Warn("test: approve: no open request");
                     break;
                 }
                 case "dailychanges":
