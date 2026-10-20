@@ -298,6 +298,13 @@ static partial class Program
         Expect(d["coop.guest"] == "True", "guest mode is off");
         Expect(d["game.day"] == "7", "guest ran the day rollover itself: day " + d["game.day"]);
         Expect(d["game.money"] == "19950", "money changed by the day rollover: " + d["game.money"]);
+
+        // going to bed on the guest: no day change, no save (the host saves the world)
+        Command("sleep", "", guest);
+        Thread.Sleep(1500);
+        var s2 = WaitReportFrom(guest, r => true, 5, "after sleeping on the guest");
+        Expect(s2["game.day"] == "7", "guest's sleep changed the day: " + s2["game.day"]);
+        Expect(s2["save.mtime"] == d["save.mtime"], "guest wrote its session save when sleeping");
     }
 
     /// Stage 3 (host side, bot is the guest): the host applies a guest's money change once (repeats ignored),

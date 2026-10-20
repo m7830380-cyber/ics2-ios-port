@@ -21,6 +21,8 @@ namespace ICS2iOS
             Line(sb, "coop.players", net.PlayerCount.ToString(Inv));
             Line(sb, "coop.names", string.Join(",", Names(net)));
             Line(sb, "save.file", ICS2Shim.Platform.SaveFileName);
+            var savePath = System.IO.Path.Combine(ICS2Shim.Platform.PersistentDataPath, ICS2Shim.Platform.SaveFileName);
+            Line(sb, "save.mtime", System.IO.File.Exists(savePath) ? System.IO.File.GetLastWriteTimeUtc(savePath).Ticks.ToString(Inv) : "0");
             Line(sb, "fbpp.language", FBPP.GetString("language"));
             Line(sb, "snapshot.received", WorldSnapshot.ReceivedBytes.ToString(Inv));
             Line(sb, "fps",(1f / Mathf.Max(Time.smoothDeltaTime, 1e-4f)).ToString("0", Inv));
@@ -177,6 +179,10 @@ namespace ICS2iOS
                     break;
                 case "panel":
                     CoopPanel.Open = arg != "close";
+                    break;
+                case "sleep":
+                    // what going to bed does after the fade (PlayerRay -> SaveManager.SleepingChanges)
+                    SaveManager.Instance.SleepingChanges();
                     break;
                 case "dailychanges":
                     GameManager.Instance.DailyChanges();

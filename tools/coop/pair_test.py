@@ -179,6 +179,17 @@ def run(keep):
         if still + moving == 0 or worst_still > 0.3 or worst_moving > 3.0:
             raise Fail(f'people differ: standing worst {worst_still:.2f} m, walking worst {worst_moving:.2f} m')
 
+        # the host goes to bed: the day rolls over for both, at the host's time
+        d0 = int(report(hp)['game.day'])
+        command(hp, 'sleep')
+        h = wait(hp, lambda r: int(r['game.day']) == d0 + 1, 15, 'host slept: next day')
+        g = wait(gp, lambda r: int(r['game.day']) == d0 + 1, 15, 'guest is in the next day too')
+        h, g = report(hp), report(gp)
+        dh = abs(float(h['time.hourf']) - float(g['time.hourf']))
+        print(f'  after sleeping: host {h["time.hourf"]} h, guest {g["time.hourf"]} h, day {g["game.day"]}')
+        if min(dh, 24 - dh) > 0.1:
+            raise Fail('clocks differ after the night by %.2f h' % dh)
+
         # the co-op panel on both screens (the games' own captures)
         command(hp, 'panel open')
         command(gp, 'panel open')

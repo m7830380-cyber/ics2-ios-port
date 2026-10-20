@@ -378,6 +378,8 @@ static class Program
             ("CrackManager", "SpawnCrackOrder"),        // crack orders for the PC side job
             ("SecondCafeManager", "CabinAddMoneyHours"),// second cafe income (hourly)
             ("GameManager", "DailyChanges"),            // day rollover: bills, NPC resets, day++ (host sleeps)
+            ("SaveManager", "Save"),                    // the world is saved by the host (Save also runs daily
+                                                        // side effects: coin prices, employee work days)
         })
             n += GuardGuest(c, mod.GetType(type), method);
 
