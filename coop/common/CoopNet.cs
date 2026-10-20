@@ -17,6 +17,7 @@ namespace ICS2Coop
         TestQuery = 200,  // bot -> game (test builds only): request a state report
         TestReport = 201, // game -> bot: key=value lines
         TestCommand = 202,// bot -> game (test builds only): run a named test action
+        WorldSnapshot = 3, // host -> joining client: the whole world as save JSON (FBPP)
     }
 
     /// Network layer shared by the game (Unity) and the headless test bot (.NET). It knows nothing about the

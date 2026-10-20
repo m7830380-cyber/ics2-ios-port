@@ -19,7 +19,10 @@ namespace ICS2iOS
             Line(sb, "coop.localId", net.LocalId.ToString(Inv));
             Line(sb, "coop.players", net.PlayerCount.ToString(Inv));
             Line(sb, "coop.names", string.Join(",", Names(net)));
-            Line(sb, "fps", (1f / Mathf.Max(Time.smoothDeltaTime, 1e-4f)).ToString("0", Inv));
+            Line(sb, "save.file", ICS2Shim.Platform.SaveFileName);
+            Line(sb, "fbpp.language", FBPP.GetString("language"));
+            Line(sb, "snapshot.received", WorldSnapshot.ReceivedBytes.ToString(Inv));
+            Line(sb, "fps",(1f / Mathf.Max(Time.smoothDeltaTime, 1e-4f)).ToString("0", Inv));
             var gm = GameManager.Instance;
             Line(sb, "game.ready", (gm != null).ToString());
             if (gm != null)

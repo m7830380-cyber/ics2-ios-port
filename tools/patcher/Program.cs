@@ -285,6 +285,24 @@ static class Program
             }
         }
 
+        // FBPP save file name -> Platform.SaveFileName (co-op guests play in a session file)
+        {
+            var saveName = c.ShimMethod("Platform", "get_SaveFileName");
+            int hits = 0;
+            foreach (var t in mod.GetTypes())
+                foreach (var m in t.Methods)
+                {
+                    if (!m.HasBody) continue;
+                    foreach (var ins in m.Body.Instructions)
+                        if (ins.OpCode == OpCodes.Ldstr && (string)ins.Operand == "save-data.save")
+                        {
+                            ins.OpCode = OpCodes.Call; ins.Operand = saveName; hits++;
+                        }
+                }
+            if (hits != 2) c.Fail($"expected 2 uses of \"save-data.save\" (SaveManager, MainMenuManager), found {hits}");
+            n += hits;
+        }
+
         // Windows path separators in path-like string literals
         foreach (var t in mod.GetTypes())
             foreach (var m in t.Methods)

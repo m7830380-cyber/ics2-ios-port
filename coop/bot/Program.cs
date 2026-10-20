@@ -17,6 +17,7 @@ static class Program
     static CoopNet s_Net;
     static readonly Dictionary<string, Dictionary<string, string>> s_Reports = new Dictionary<string, Dictionary<string, string>>();
     static int s_Query;
+    static int s_ReportTarget; // player the state queries go to (0 = host; the bot as host asks its guest)
     static readonly Stopwatch s_Clock = Stopwatch.StartNew();
 
     static int Main(string[] args)
@@ -35,6 +36,8 @@ static class Program
                 case "selftest": return SelfTest();
                 case "handshake": Handshake(address, port, timeout); break;
                 case "puppets": Puppets(address, port, timeout, Flag(args, "--mutate")); break;
+                case "snapshot": Snapshot(address, port, timeout, Arg(args, "--fixture", "fixtures")); break;
+                case "join": JoinGuest(port, timeout, Arg(args, "--fixture", "fixtures"), Flag(args, "--mutate")); break;
                 default: throw new Fail("unknown scenario " + scenario);
             }
             Console.WriteLine("RESULT: PASS");
@@ -146,6 +149,66 @@ static class Program
         WaitReport(r => r["puppets"] == "1" && !r.ContainsKey($"puppet.{me}.pos"), 15, "old puppet removed after leaving");
     }
 
+    /// Stage 4a: a hosting game sends its world when the bot joins. The snapshot must be a save whose money
+    /// and day match what the game reports. Saves it as a fixture for the join test (local, never committed:
+    /// it is game data).
+    static void Snapshot(string address, int port, int timeout, string fixtureDir)
+    {
+        string json = null;
+        s_Net.Message += (from, id, r) => { if (id == Msg.WorldSnapshot) json = r.GetLargeString(); };
+        ConnectWithRetry(address, port, timeout);
+        WaitFor(() => json != null, 20, "world snapshot");
+        Say($"snapshot: {json.Length / 1024} KB");
+        var save = SaveJson.Parse(json);
+        var rep = WaitReport(r => r["game.ready"] == "True", 30, "game ready");
+        Expect(save.Str("gamesaved") == "saved", "snapshot is not marked as a saved game");
+        float money = save.Float("money");
+        Expect(Math.Abs(money - float.Parse(rep["game.money"], System.Globalization.CultureInfo.InvariantCulture)) < 0.01f,
+               $"snapshot money {money} != game {rep["game.money"]}");
+        Expect(save.Int("globaldaycount").ToString() == rep["game.day"], $"snapshot day {save.Int("globaldaycount")} != game {rep["game.day"]}");
+        Expect(save.Count > 50, $"snapshot has only {save.Count} keys");
+        System.IO.Directory.CreateDirectory(fixtureDir);
+        System.IO.File.WriteAllText(System.IO.Path.Combine(fixtureDir, "snapshot.json"), json);
+        System.IO.File.WriteAllText(System.IO.Path.Combine(fixtureDir, "own-save.save"), SaveJson.Scramble(json));
+        Say($"fixture written: {save.Count} keys, money {money}, day {save.Int("globaldaycount")}");
+    }
+
+    /// Stage 4b: the bot hosts with a known world (the fixture with money 12345 and day 7); a real game joins
+    /// from its main menu, must load the cafe from that world into its session save, and keep its own
+    /// language setting. --mutate: the bot sends day 7 but expects 8, so the run must FAIL.
+    static void JoinGuest(int port, int timeout, string fixtureDir, bool mutate)
+    {
+        var save = SaveJson.Parse(System.IO.File.ReadAllText(System.IO.Path.Combine(fixtureDir, "snapshot.json")));
+        save.SetFloat("money", 12345f);
+        save.SetInt("globaldaycount", 7);
+        save.SetStr("language", "BOTLANG");
+        string world = save.ToJson();
+
+        int guest = -1;
+        s_Net.PlayerJoined += (id, name) => guest = id;
+        s_Net.LocalName = "TestHost";
+        Expect(s_Net.StartHost(port), "bot cannot host");
+        WaitFor(() => guest > 0, timeout, "the game to join");
+        Say($"game joined as player {guest}; sending the world");
+        s_Net.Begin(Msg.WorldSnapshot).PutLargeString(world);
+        s_Net.SendTo(guest);
+
+        var r = WaitReportFrom(guest, x => x["scene"] == "MainScene" && x["game.ready"] == "True", 180, "guest in the cafe");
+        r = WaitReportFrom(guest, x => x["game.day"] != "0", 20, "guest loaded the save");
+        Expect(r["save.file"] == "coop-session.save", "guest plays in " + r["save.file"]);
+        Expect(r["game.money"] == "12345", "guest money " + r["game.money"]);
+        Expect(r["game.day"] == (mutate ? "8" : "7"), "guest day " + r["game.day"]);
+        Expect(r["fbpp.language"] != "BOTLANG", "guest took the host's language setting");
+        Say($"guest: money {r["game.money"]}, day {r["game.day"]}, language kept ({r["fbpp.language"]})");
+    }
+
+    static Dictionary<string, string> WaitReportFrom(int player, Func<Dictionary<string, string>, bool> ok, int timeout, string what)
+    {
+        s_ReportTarget = player;
+        try { return WaitReport(ok, timeout, what); }
+        finally { s_ReportTarget = 0; }
+    }
+
     static void Command(string command, string arg)
     {
         var w = s_Net.Begin(Msg.TestCommand);
@@ -216,7 +279,7 @@ static class Program
         {
             string tag = "q" + (++s_Query);
             s_Net.Begin(Msg.TestQuery).Put(tag);
-            s_Net.SendTo(0);
+            s_Net.SendTo(s_ReportTarget);
             var until = s_Clock.Elapsed.TotalSeconds + 2;
             while (s_Clock.Elapsed.TotalSeconds < until && !s_Reports.ContainsKey(tag)) Pump();
             if (s_Reports.TryGetValue(tag, out last))
@@ -225,7 +288,8 @@ static class Program
                 try { good = ok(last); } catch (KeyNotFoundException) { good = false; }
                 if (good) { Say("ok: " + what); return last; }
             }
-            if (s_Net.LocalId <= 0) throw new Fail("lost the connection while waiting for: " + what);
+            if (s_Net.LocalId < 0 || (s_Net.IsHost ? s_Net.PlayerCount < 2 : s_Net.LocalId == 0))
+                throw new Fail("lost the connection while waiting for: " + what);
         }
         throw new Fail($"timed out waiting for: {what} (last report: {(last == null ? "none" : string.Join(" ", last))})");
     }

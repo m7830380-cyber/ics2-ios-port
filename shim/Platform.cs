@@ -59,6 +59,11 @@ namespace ICS2Shim
         static string s_Profile;
         static bool s_ProfileChecked;
 
+        /// The game's save file name (it hardcodes "save-data.save" when it starts FBPP). A co-op guest plays
+        /// in a separate session file so the host's world never overwrites the guest's own save.
+        public const string DefaultSaveFileName = "save-data.save";
+        public static string SaveFileName { get; set; } = DefaultSaveFileName;
+
         /// Value after `name` on the command line, or null.
         public static string CommandLineValue(string name)
         {

@@ -7,7 +7,7 @@ hosting), run the headless bot (coop/bot) against it, then stop the game process
 PID, never by name) and check the game's own log for exceptions from the co-op code. Exit code 0 only if
 every scenario printed RESULT: PASS. `selftest` (the scorer must be able to fail) always runs first.
 """
-import argparse, os, shutil, subprocess, sys, time
+import argparse, hashlib, os, shutil, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TEST_ROOT = os.path.join(os.path.expanduser('~'), 'ics2-test')
@@ -15,6 +15,8 @@ BOT = os.path.join(ROOT, 'coop', 'bot')
 BOT_DLL = os.path.join(BOT, 'bin', 'Release', 'net8.0', 'CoopBot.dll')
 EXE = 'Internet Cafe Simulator 2.exe'
 LOG = 'InternetCafeSim2-iOS.log'
+FIXTURES = os.path.join(TEST_ROOT, 'fixtures')  # game data captured by tests: local only, never committed
+OWN_SAVE = 'save-data.save'
 # scenario -> (bot scenario, game role, game extra args, profile seed, bot args, must fail).
 # Seeds are saves copied into the profile first. "Mutant" scenarios check that a test can fail: the bot is
 # told to expect something wrong, and the suite passes only if that run FAILS.
@@ -22,7 +24,33 @@ SCENARIOS = {
     'handshake': ('handshake', 'host', [], None, [], False),
     'puppets': ('puppets', 'host', [], None, [], False),
     'puppets-mutant': ('puppets', 'host', [], None, ['--mutate'], True),
+    'snapshot': ('snapshot', 'host', [], None, ['--fixture', FIXTURES], False),
+    # guest: the bot hosts; the game has its own save (seeded) and joins from the main menu
+    'join': ('join', 'guest', [], 'own-save', ['--fixture', FIXTURES], False),
+    'join-mutant': ('join', 'guest', [], 'own-save', ['--fixture', FIXTURES, '--mutate'], True),
 }
+
+
+def sha(path):
+    return hashlib.sha256(open(path, 'rb').read()).hexdigest() if os.path.exists(path) else None
+
+
+def guest_after_session(profile, seed_hash):
+    """After the bot (host) left: the guest went back to its own save and the main menu, and its own save
+    file is byte for byte what it was before the session."""
+    log = os.path.join(profile, LOG)
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        text = open(log, encoding='utf-8', errors='replace').read() if os.path.exists(log) else ''
+        tail = text[text.rfind('back to the own save file'):] if 'back to the own save file' in text else ''
+        if "scene loaded: 'MainMenu'" in tail:
+            break
+        time.sleep(1)
+    else:
+        return 'RESULT: FAIL guest did not return to its own save and the main menu after the host left'
+    if sha(os.path.join(profile, OWN_SAVE)) != seed_hash:
+        return 'RESULT: FAIL the guest own save file changed during the session'
+    return None
 
 
 def run_bot(*args, timeout=600):
@@ -74,14 +102,22 @@ def run_scenario(name, slot, keep):
     if os.path.isdir(profile):
         shutil.rmtree(profile)
     os.makedirs(profile)
-    if seed:
-        shutil.copytree(seed, profile, dirs_exist_ok=True)
+    seed_hash = None
+    if seed == 'own-save':
+        src = os.path.join(FIXTURES, 'own-save.save')
+        if not os.path.exists(src):
+            print(f'{name}: RESULT: FAIL no fixture; run the snapshot scenario first')
+            return False
+        shutil.copyfile(src, os.path.join(profile, OWN_SAVE))
+        seed_hash = sha(src)
     exe = os.path.join(TEST_ROOT, f'slot{slot}', EXE)
     args = [exe, '-screen-fullscreen', '0', '-screen-width', '640', '-screen-height', '360',
-            '-ics2profile', profile, '-ics2test', '-ics2autostart', '-ics2name', f'Game{slot}',
+            '-ics2profile', profile, '-ics2test', '-ics2name', f'Game{slot}',
             '-logFile', os.path.join(profile, 'player.log')]
     if role == 'host':
-        args += ['-ics2coop', 'host']
+        args += ['-ics2autostart', '-ics2coop', 'host']
+    elif role == 'guest':
+        args += ['-ics2coop', 'join', '127.0.0.1']
     args += extra
     game = subprocess.Popen(args)
     print(f'--- {name}: game pid {game.pid}, profile {profile}', flush=True)
@@ -90,6 +126,8 @@ def run_scenario(name, slot, keep):
         print(out.rstrip(), flush=True)
         if game.poll() is not None and 'PASS' in result:
             result = f'RESULT: FAIL game exited early with code {game.returncode}'
+        if role == 'guest' and 'PASS' in result:
+            result = guest_after_session(profile, seed_hash) or result
     finally:
         if not keep:
             game.terminate()

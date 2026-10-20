@@ -39,7 +39,8 @@ namespace ICS2iOS
             Net.Message += OnMessage;
             Net.PlayerJoined += (id, name) => DebugOverlay.Toast(name + " joined");
             Net.PlayerLeft += (id, name) => DebugOverlay.Toast(name + " left");
-            Net.Disconnected += reason => DebugOverlay.Toast("Disconnected from host");
+            Net.Disconnected += reason => { DebugOverlay.Toast("Disconnected from host"); EndGuestSession(); };
+            WorldSnapshot.Init();
 
             TestMode = Platform.CommandLineFlag("-ics2test");
             if (TestMode)
@@ -67,19 +68,50 @@ namespace ICS2iOS
 
         void OnSceneLoaded(Scene s, LoadSceneMode mode)
         {
-            if (s.name == "MainMenu" && m_AutoStart) m_AutoStartAt = Time.unscaledTime + 3f;
-            if (s.name == "MainScene" && m_PendingRole != null)
+            if (s.name == "MainMenu")
             {
-                if (m_PendingRole == "host") Host();
-                else if (m_PendingRole == "join") Join(m_PendingAddress);
-                m_PendingRole = null;
+                // leaving the cafe ends the session; a guest goes back to its own save
+                if (s_InCafe && Active) Leave();
+                s_InCafe = false;
+                WorldSnapshot.ReloadAfterSession();
+                if (m_AutoStart) m_AutoStartAt = Time.unscaledTime + 3f;
+                // a guest joins from the main menu: the host's world arrives, then the cafe loads
+                if (m_PendingRole == "join") { Join(m_PendingAddress); m_PendingRole = null; }
             }
-            if (s.name == "MainMenu" && Active) Leave(); // back to the menu ends the session
+            if (s.name == "MainScene")
+            {
+                s_InCafe = true;
+                if (m_PendingRole == "host") { Host(); m_PendingRole = null; }
+            }
         }
+
+        static bool s_InCafe;
 
         public static void Host() { if (Net.StartHost()) DebugOverlay.Toast("Co-op: hosting"); }
         public static void Join(string address) { Net.Join(address); }
-        public static void Leave() { Net.Stop(); Log.Info("coop: session ended"); }
+
+        public static void Leave()
+        {
+            Net.Stop();
+            Log.Info("coop: session ended");
+            EndGuestSession();
+        }
+
+        /// A guest's session is over (left or lost the host): back to the own save, and out of the host's
+        /// world to the main menu.
+        static void EndGuestSession()
+        {
+            if (!WorldSnapshot.InSessionSave) return;
+            WorldSnapshot.Restore();
+            if (s_InCafe && Instance != null) Instance.StartCoroutine(ToMainMenu());
+        }
+
+        static System.Collections.IEnumerator ToMainMenu()
+        {
+            yield return null; // not from inside the network callback
+            Time.timeScale = 1f;
+            SceneManager.LoadScene("MainMenu");
+        }
 
         void Update()
         {
