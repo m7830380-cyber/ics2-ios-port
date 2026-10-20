@@ -16,7 +16,7 @@ namespace ICS2Shim
         /// Raised when an achievement is unlocked for the first time (the iOS mod shows a toast).
         public static event Action<string> AchievementUnlocked;
 
-        static string FilePath => Path.Combine(Application.persistentDataPath, "achievements.txt");
+        static string FilePath => Path.Combine(Platform.PersistentDataPath, "achievements.txt");
 
         static HashSet<string> Unlocked
         {

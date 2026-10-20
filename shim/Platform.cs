@@ -38,7 +38,50 @@ namespace ICS2Shim
         public static Process[] GetProcessesByName(string name) => new Process[0];
 
         /// Replaces Application.dataPath in the game (screenshots folder): the app bundle is read-only on iOS.
-        public static string WritableDataPath => Application.persistentDataPath;
+        public static string WritableDataPath => PersistentDataPath;
+
+        /// Replaces Application.persistentDataPath in the game. `-ics2profile <dir>` on the command line (Windows
+        /// test installs) moves saves, settings and the log into that folder, so test copies never touch the
+        /// owner's real saves.
+        public static string PersistentDataPath
+        {
+            get
+            {
+                if (!s_ProfileChecked)
+                {
+                    s_ProfileChecked = true;
+                    s_Profile = CommandLineValue("-ics2profile");
+                    if (s_Profile != null) System.IO.Directory.CreateDirectory(s_Profile);
+                }
+                return s_Profile ?? Application.persistentDataPath;
+            }
+        }
+        static string s_Profile;
+        static bool s_ProfileChecked;
+
+        /// Value after `name` on the command line, or null.
+        public static string CommandLineValue(string name)
+        {
+            try
+            {
+                var args = Environment.GetCommandLineArgs();
+                for (int i = 0; i < args.Length - 1; i++)
+                    if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) return args[i + 1];
+            }
+            catch (Exception) { }
+            return null;
+        }
+
+        public static bool CommandLineFlag(string name)
+        {
+            try
+            {
+                foreach (var a in Environment.GetCommandLineArgs())
+                    if (string.Equals(a, name, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            catch (Exception) { }
+            return false;
+        }
 
         // ---- frame pacing ----------------------------------------------------------------------
         // iOS ignores QualitySettings.vSyncCount and runs at 30 fps unless targetFrameRate is set,
@@ -98,5 +141,15 @@ namespace ICS2Shim
         public static void SetFullScreenMode(FullScreenMode mode) { }
 
         static void Ignored(string what) => Debug.Log("[ICS2-iOS] game requested Screen." + what + " - ignored on iOS");
+
+        // ---- Enviro sky ----------------------------------------------------------------------------
+        /// Replaces the sky command buffer's Blit(CameraTarget, CameraTarget, sky): reading the target being
+        /// written is undefined on Metal and leaves old frames in the sky. The sky shader ignores its source.
+        public static void SkyBlit(UnityEngine.Rendering.CommandBuffer cb, UnityEngine.Rendering.RenderTargetIdentifier source,
+                                   UnityEngine.Rendering.RenderTargetIdentifier dest, Material mat)
+        {
+            cb.Blit(Texture2D.blackTexture, dest, mat);
+            Debug.Log("[ICS2-iOS] sky: Enviro sky blit uses a black source (no feedback)");
+        }
     }
 }

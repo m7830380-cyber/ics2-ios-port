@@ -20,7 +20,7 @@ namespace ICS2iOS
         public static int Quality = 1;              // 0 low, 1 medium, 2 high (shadows, post-processing)
         public static bool RealWeather;             // off by default: live weather would send the IP address to a weather service
 
-        static string Path => System.IO.Path.Combine(Application.persistentDataPath, "ICS2iOS-settings.txt");
+        static string Path => System.IO.Path.Combine(ICS2Shim.Platform.PersistentDataPath, "ICS2iOS-settings.txt");
 
         public static event Action Changed;
 

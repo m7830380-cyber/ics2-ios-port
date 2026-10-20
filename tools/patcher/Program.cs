@@ -243,6 +243,7 @@ static class Program
         var setVSync = c.ShimMethod("Platform", "SetVSyncCount", "System.Int32");
         var setFps = c.ShimMethod("Platform", "SetTargetFrameRate", "System.Int32");
         var dataPath = c.ShimMethod("Platform", "get_WritableDataPath");
+        var persistentPath = c.ShimMethod("Platform", "get_PersistentDataPath");
         var steam = c.ShimType("SteamOffline");
         foreach (var (m, ins) in Calls(mod))
         {
@@ -259,6 +260,10 @@ static class Program
             else if (dt == "UnityEngine.Application" && mr.Name == "get_dataPath")
             {
                 ins.OpCode = OpCodes.Call; ins.Operand = dataPath; n++;
+            }
+            else if (dt == "UnityEngine.Application" && mr.Name == "get_persistentDataPath")
+            {
+                ins.OpCode = OpCodes.Call; ins.Operand = persistentPath; n++;
             }
             else if (dt == "UnityEngine.Screen" && (mr.Name == "SetResolution" || mr.Name == "set_fullScreen" || mr.Name == "set_fullScreenMode"))
             {
@@ -347,6 +352,25 @@ static class Program
         // --- settings: the resolution list has one entry on iOS, a saved desktop index threw in
         // SettingMenu.Start and skipped loading the remaining settings (volume, AA, motion blur ...)
         n += MakeNoOp(c, mod.GetType("SettingMenu"), "SetResolution");
+
+        // --- Enviro sky: Blit(CameraTarget, CameraTarget, sky) reads the target it writes. Metal keeps the old
+        // frames ("hall of mirrors"); the sky shader never samples its source, so Platform.SkyBlit blits black.
+        {
+            var refresh = mod.GetType("EnviroSkyRendering")?.Methods.FirstOrDefault(x => x.Name == "RefreshCameraCommand");
+            var skyBlit = c.ShimMethod("Platform", "SkyBlit", "UnityEngine.Rendering.CommandBuffer",
+                "UnityEngine.Rendering.RenderTargetIdentifier", "UnityEngine.Rendering.RenderTargetIdentifier", "UnityEngine.Material");
+            int hits = 0;
+            if (refresh != null)
+                foreach (var ins in refresh.Body.Instructions)
+                    if ((ins.OpCode == OpCodes.Callvirt || ins.OpCode == OpCodes.Call) && ins.Operand is MethodReference mr &&
+                        mr.DeclaringType.FullName == "UnityEngine.Rendering.CommandBuffer" && mr.Name == "Blit" &&
+                        Sig(mr) == "UnityEngine.Rendering.RenderTargetIdentifier,UnityEngine.Rendering.RenderTargetIdentifier,UnityEngine.Material")
+                    {
+                        ins.OpCode = OpCodes.Call; ins.Operand = skyBlit; hits++;
+                    }
+            if (hits != 1) c.Fail($"EnviroSkyRendering.RefreshCameraCommand: expected 1 sky blit, found {hits}");
+            n += hits;
+        }
         {
             var lsd = mod.GetType("I2.Loc.LanguageSourceData");
             var imp = lsd?.Methods.FirstOrDefault(x => x.Name == "Import_Google" && x.ReturnType.FullName == "System.Void");

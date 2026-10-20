@@ -12,7 +12,15 @@
     <!-- patched game assemblies + ICS2Shim (tools/build_plugins.py output) -->
     <GameAsmDir Condition="'$(GameAsmDir)' == ''">$(MSBuildThisFileDirectory)..\..\ics2-ios-private\Plugins</GameAsmDir>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <!-- LiteNetLib (third_party) is built from source with the defines Unity would set, as its readme asks -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>$(DefineConstants);UNITY_5_3_OR_NEWER;UNITY_2018_3_OR_NEWER;UNITY_2018_4_OR_NEWER;UNITY_2019_1_OR_NEWER;UNITY_2020_2_OR_NEWER;LITENETLIB_UNSAFE</DefineConstants>
+    <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\coop\common\**\*.cs" Link="Coop\Common\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\third_party\LiteNetLib\**\*.cs" Link="ThirdParty\LiteNetLib\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
   <ItemGroup>
     <Reference Include="Assembly-CSharp"><HintPath>$(GameAsmDir)\Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Assembly-CSharp-firstpass"><HintPath>$(GameAsmDir)\Assembly-CSharp-firstpass.dll</HintPath><Private>false</Private></Reference>

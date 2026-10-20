@@ -20,7 +20,7 @@ namespace ICS2iOS
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         static void EarlyInit()
         {
-            Documents = Application.persistentDataPath;
+            Documents = Platform.PersistentDataPath;
             Log.Init(Documents);
             IosSettings.Load();
             try
@@ -84,7 +84,7 @@ namespace ICS2iOS
                 go.AddComponent<DebugOverlay>();
                 go.AddComponent<HudView>();
                 go.AddComponent<SettingsPanel>();
-                go.AddComponent<SkyFix>();
+                go.AddComponent<CoopSession>();
                 IosGraphics.Init();
 
                 SteamOffline.AchievementUnlocked += name => DebugOverlay.Toast("Achievement unlocked");
