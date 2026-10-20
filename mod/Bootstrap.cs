@@ -84,6 +84,7 @@ namespace ICS2iOS
                 go.AddComponent<DebugOverlay>();
                 go.AddComponent<HudView>();
                 go.AddComponent<SettingsPanel>();
+                go.AddComponent<SkyFix>();
                 IosGraphics.Init();
 
                 SteamOffline.AchievementUnlocked += name => DebugOverlay.Toast("Achievement unlocked");

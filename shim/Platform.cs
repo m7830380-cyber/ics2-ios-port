@@ -87,5 +87,16 @@ namespace ICS2Shim
         {
             Application.targetFrameRate = EffectiveTargetFps;
         }
+
+        // ---- display mode: the iOS mod owns the render resolution (Settings > Render scale) ----
+        // The game's resolution / fullscreen options are desktop window settings; on iOS they would shrink
+        // or stretch the screen behind the mod's back, so they are ignored.
+        public static void SetResolution(int width, int height, bool fullscreen) => Ignored($"SetResolution({width}x{height})");
+        public static void SetResolution(int width, int height, bool fullscreen, int refreshRate) => Ignored($"SetResolution({width}x{height}@{refreshRate})");
+        public static void SetResolution(int width, int height, FullScreenMode mode) => Ignored($"SetResolution({width}x{height}, {mode})");
+        public static void SetFullScreen(bool value) { }
+        public static void SetFullScreenMode(FullScreenMode mode) { }
+
+        static void Ignored(string what) => Debug.Log("[ICS2-iOS] game requested Screen." + what + " - ignored on iOS");
     }
 }

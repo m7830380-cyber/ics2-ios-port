@@ -260,6 +260,13 @@ static class Program
             {
                 ins.OpCode = OpCodes.Call; ins.Operand = dataPath; n++;
             }
+            else if (dt == "UnityEngine.Screen" && (mr.Name == "SetResolution" || mr.Name == "set_fullScreen" || mr.Name == "set_fullScreenMode"))
+            {
+                string name = mr.Name == "set_fullScreen" ? "SetFullScreen" : mr.Name == "set_fullScreenMode" ? "SetFullScreenMode" : mr.Name;
+                var target = c.ShimType("Platform").Methods.FirstOrDefault(x => x.Name == name && x.IsStatic && Sig(x) == Sig(mr));
+                if (target == null) { c.Fail($"{m.FullName}: no Platform equivalent for Screen.{mr.Name}({Sig(mr)})"); continue; }
+                ins.OpCode = OpCodes.Call; ins.Operand = mod.ImportReference(target); n++;
+            }
             else if ((dt == "Steamworks.SteamUserStats" || dt == "Steamworks.SteamApps") && m.DeclaringType.Name != "SteamManager")
             {
                 var target = steam.Methods.FirstOrDefault(x => x.Name == mr.Name && x.IsStatic && Sig(x) == Sig(mr) &&
@@ -336,6 +343,10 @@ static class Program
 
         // --- no network -----------------------------------------------------------------------
         n += MakeNoOp(c, mod.GetType("Weather"), "Start");
+
+        // --- settings: the resolution list has one entry on iOS, a saved desktop index threw in
+        // SettingMenu.Start and skipped loading the remaining settings (volume, AA, motion blur ...)
+        n += MakeNoOp(c, mod.GetType("SettingMenu"), "SetResolution");
         {
             var lsd = mod.GetType("I2.Loc.LanguageSourceData");
             var imp = lsd?.Methods.FirstOrDefault(x => x.Name == "Import_Google" && x.ReturnType.FullName == "System.Void");

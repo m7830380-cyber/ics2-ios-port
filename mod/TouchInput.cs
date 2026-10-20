@@ -36,6 +36,9 @@ namespace ICS2iOS
         public static float StickRadius => TouchHud.Unit * 0.9f;
         /// Camera turn per point dragged at look sensitivity 1 (a drag across the whole screen is ~200 degrees).
         const float DegreesPerPoint = 0.22f;
+        /// Screen pixels per iOS point. Derived from the screen height (a landscape iPhone is ~410 points tall)
+        /// rather than Screen.dpi, which ignores the render scale and is wrong on some devices.
+        static float PixelsPerPoint => Mathf.Max(0.5f, Screen.height / 410f);
 
         public static void Tick()
         {
@@ -140,8 +143,7 @@ namespace ICS2iOS
                 {
                     Vector2 d = p - f.Last;
                     // pixels -> points; at sensitivity 1 a drag of one point turns the view by DegreesPerPoint
-                    float points = Mathf.Max(1f, Screen.dpi / 163f);
-                    float deg = DegreesPerPoint * IosSettings.LookSensitivity / points;
+                    float deg = DegreesPerPoint * IosSettings.LookSensitivity / PixelsPerPoint;
                     VInput.AddFrameAxis("Mouse X", GameState.LookAxis(d.x * deg));
                     VInput.AddFrameAxis("Mouse Y", GameState.LookAxis(d.y * deg, true) * (IosSettings.InvertLook ? -1f : 1f));
                     break;
@@ -165,7 +167,7 @@ namespace ICS2iOS
                 case Role.Scroll:
                 {
                     float dy = p.y - f.Last.y;
-                    VInput.VScroll += new Vector2(0, dy / Mathf.Max(20f, Screen.dpi * 0.12f));
+                    VInput.VScroll += new Vector2(0, dy / (PixelsPerPoint * 20f));
                     break;
                 }
             }
