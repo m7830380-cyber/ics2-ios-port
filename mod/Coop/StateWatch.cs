@@ -14,7 +14,8 @@ namespace ICS2iOS
     //  * the scene's own animators (doors, the home door, CD trays, toasters, the coffee holder, ovens ...):
     //    their parameters. People, players, UI and the local player's hands are not in it.
     //  * values the game keeps in fields: tip box, cash registers, fridge, coffee jugs, fires, horse bets,
-    //    lights, power, shop open, air conditioners, fans, extinguishers, rooms bought, the cafe's smell.
+    //    lights, power, shop open, air conditioners, fans, extinguishers, rooms bought, the cafe's smell,
+    //    crypto prices, the family's money / mood / jobs, unspent skill points.
     //  * whether shop shelves and other interactive scene objects are shown.
     // Host only: elevator cars (only the host's travel; a guest's cars follow them, see below), and the dirt
     // already on the floor when a guest joins.
@@ -31,6 +32,9 @@ namespace ICS2iOS
             "CivilManager.shopisOpened", "Door.doorLock", "AirConditioner.climateDegree", "AirConditioner.climateteisWorking",
             "AirConditioner.autoMod", "Fan.fanisWorking", "Extinguisher.fuel", "UpgradeItem.buyed", "Oven.cooking",
             "GameManager.globalCafeSmell", "Employee.isRecruit", "Employee.fired",
+            // crypto prices (the host rolls them each day), the family's money / mood / jobs, skill points
+            "BuyCoinn.price", "BuyCoinn.change", "Wife.totalMoney", "Wife.morale", "Wife.work", "Wife.pregnant",
+            "Boy.totalMoney", "Boy.morale", "Boy.work", "GameManager.totalunusedabilitypoint",
         };
 
         sealed class AnimEntry { public Animator Anim; public AnimSync.Layout Layout; public AnimSync.State Known, Pending; public int Changes; public float Since, QuietUntil; public bool Noisy; }

@@ -26,14 +26,18 @@ namespace ICS2iOS
     //   Hit         a fighting customer's blow: the host gives it to the player it went for (FightSync).
     //   Door        an elevator door: sent as "open" or "close", not as a toggle (a door that is half way on one
     //               device would otherwise go the other way there).
+    //   HostRelay   a guest sends it to the host; the host runs it and replays it on every guest, the one who
+    //               asked included (new reviews: the list and the cafe's rating must be the same everywhere).
     //   Slot        a slot machine pull: plays where it was pulled (that player paid and gets the win) and is
     //               shown on the other devices. Its three reels stop on the same symbols everywhere (SlotReel:
     //               each reel's dice use the pull's seed), and only the player who pulled is paid (SlotEnd).
-    // A replay never changes money (the device that made the call already counted it) and its FBPP writes are
+    // A replay runs with the money the caller had when it made the call (a purchase that went through there goes
+    // through here, even if the shared total has not caught up yet), then the money is put back: it never
+    // changes money (the device that made the call already counted it), and its FBPP writes are
     // not sent again. Calls made inside a call that is already being replayed elsewhere are not sent again.
     public class CallSync : MonoBehaviour
     {
-        enum Rule { Mirror, Host, HostReplay, HostOnly, HostEcho, Punch, HostAlways, Hit, Door, Slot, SlotReel, SlotEnd }
+        enum Rule { Mirror, Host, HostReplay, HostOnly, HostEcho, Punch, HostAlways, Hit, Door, Slot, SlotReel, SlotEnd, HostRelay }
 
         static readonly Dictionary<string, Rule> Rules = new Dictionary<string, Rule>
         {
@@ -86,6 +90,12 @@ namespace ICS2iOS
             ["Robber.OnTriggerEnter"] = Rule.Punch, ["Bomberman.OnTriggerEnter"] = Rule.Punch, ["Civil.OnTriggerEnter"] = Rule.Punch,
             ["Civil.Attacked"] = Rule.Hit,
             ["SlotRoll.Roll"] = Rule.SlotReel, ["SlotMachineClub.RollEnded"] = Rule.SlotEnd,
+            ["ReviewManager.SpawnReview"] = Rule.HostRelay, ["Ghost.BuyPoliceRoutine"] = Rule.Host,
+            ["Games.CompleteBuy"] = Rule.Mirror, ["GameManager.OpenAutoApprove"] = Rule.Mirror, ["VirusScanner.BuyPremium"] = Rule.Mirror,
+            ["GameManager.HomeActive1"] = Rule.Mirror, ["GameManager.HomeActive2"] = Rule.Mirror,
+            ["SecondCafeManager.BuyedCafeLightingSystem"] = Rule.Mirror, ["SecondCafeManager.BuyedCafeManager"] = Rule.Mirror,
+            ["SecondCafeManager.ChangeWallMaterial"] = Rule.Mirror, ["SecondCafeManager.ChangeFloorMaterial"] = Rule.Mirror,
+            ["SecondCafeManager.ChangeCeilingMaterial"] = Rule.Mirror,
         };
 
         static bool s_Replaying;          // running a call that came from another device
@@ -120,7 +130,7 @@ namespace ICS2iOS
             {
                 // the replay itself runs. The host running a guest's call also passes on the dice rolls inside
                 // it: the guest dropped its own (HostReplay), so they would happen on the host only
-                if (rule == Rule.HostReplay && !guest && CoopSession.WorldReady)
+                if ((rule == Rule.HostReplay || rule == Rule.HostRelay) && !guest && CoopSession.WorldReady)
                 {
                     try { Send(self, action, args, -1); }
                     catch (Exception e) { s_Failed++; Log.Error($"coop: sending {action} failed: {e}"); }
@@ -153,6 +163,10 @@ namespace ICS2iOS
                         if (!guest) return false;
                         if (!CoopSession.WorldReady) return false;  // loading: the game sets itself up
                         if (!covered) Send(self, action, args, 0);  // the host runs it
+                        return true;
+                    case Rule.HostRelay:
+                        if (!guest) { if (!covered) Send(self, action, args, -1); return false; }
+                        if (CoopSession.WorldReady && !covered) Send(self, action, args, 0);   // the host makes it
                         return true;
                     case Rule.HostReplay:
                         if (guest) return true;
@@ -189,6 +203,7 @@ namespace ICS2iOS
             var w = CoopSession.Net.Begin(Msg.Call);
             w.Put(action);
             w.Put(seed);
+            w.Put(GameManager.Instance != null ? GameManager.Instance.money : 0f);
             NetRef.Put(w, self as UnityEngine.Object);
             w.Put((byte)args.Length);
             foreach (var a in args) NetRef.PutValue(w, NetRef.CanWrite(a) ? a : null);
@@ -206,6 +221,7 @@ namespace ICS2iOS
             var rr = new NetDataReader(raw);
             string action = rr.GetString();
             int seed = rr.GetInt();
+            float callerMoney = rr.GetFloat();
             UnityEngine.Object self;
             object[] args;
             try
@@ -223,11 +239,11 @@ namespace ICS2iOS
                 w.Put(raw);
                 CoopSession.Net.SendAll(LiteNetLib.DeliveryMethod.ReliableOrdered, from);
             }
-            if (rule == Rule.Host && CoopSession.IsHost) { RunAsHost(self, action, args, seed); return; }
+            if ((rule == Rule.Host || rule == Rule.HostRelay) && CoopSession.IsHost) { RunAsHost(self, action, args, seed); return; }
             if (rule == Rule.Punch && CoopSession.IsHost) { RunPunch(self, action, args); return; }
             if (rule == Rule.Door) { ReplayDoor(self, args, seed); return; }
-            if (rule == Rule.Slot) { ReplaySlot(self, seed); return; }
-            Replay(self, action, args, seed, from);
+            if (rule == Rule.Slot) { ReplaySlot(self, seed, callerMoney); return; }
+            Replay(self, action, args, seed, from, callerMoney);
         }
 
         /// A guest asked the host to do it: the host runs it as its own call (its results sync as usual).
@@ -278,14 +294,14 @@ namespace ICS2iOS
         }
 
         /// Another player pulled a slot machine: the same pull here, shown only (no pay, no win).
-        static void ReplaySlot(UnityEngine.Object self, int seed)
+        static void ReplaySlot(UnityEngine.Object self, int seed, float callerMoney)
         {
             var slot = self is GameObject go ? go.GetComponent<SlotMachineClub>() : self as SlotMachineClub;
             if (slot == null) { s_Failed++; Log.Warn("coop: slot machine pull for a machine that is not here"); return; }
             if (!slot.rollAvailable) return;   // still turning here: this pull is not shown
             s_SlotSeeds[slot] = seed;
             s_SlotShown.Add(slot);
-            Replay(slot, "SlotMachineClub.Roll", new object[0], seed, 0);
+            Replay(slot, "SlotMachineClub.Roll", new object[0], seed, 0, callerMoney);
         }
 
         /// A reel starts turning: its symbol comes from the pull's seed, so it is the same on every device (the
@@ -307,11 +323,18 @@ namespace ICS2iOS
             return true;
         }
 
-        static void Replay(UnityEngine.Object self, string action, object[] args, int seed, int from)
+        static void Replay(UnityEngine.Object self, string action, object[] args, int seed, int from, float callerMoney)
         {
+            // a game already bought here (bought on both at once, or loaded): buying it again would list it twice
+            if (action == "Games.CompleteBuy")
+            {
+                var game = self is GameObject gg ? gg.GetComponent<Games>() : self as Games;
+                if (game != null && game.gameBuyed) return;
+            }
             UnityEngine.Random.InitState(seed);
             var gm = GameManager.Instance;
             float money = gm != null ? gm.money : 0f;
+            if (gm != null) gm.money = callerMoney;                 // the caller's checks pass here too
             var result = Invoke(self, action, args, replay: true);
             if (gm != null) gm.money = money;                       // counted where the call was made
             s_Replayed++;

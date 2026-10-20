@@ -57,6 +57,11 @@ static class CoopHooks
         "Civil.Attacked",
         // slot machines: the reels' symbols and who gets paid
         "SlotRoll.Roll", "SlotMachineClub.RollEnded",
+        // reviews, games for the customers' PCs, the auto-approve and antivirus apps, homes, the second cafe's looks
+        "ReviewManager.SpawnReview", "Ghost.BuyPoliceRoutine", "Games.CompleteBuy", "GameManager.OpenAutoApprove", "VirusScanner.BuyPremium",
+        "GameManager.HomeActive1", "GameManager.HomeActive2",
+        "SecondCafeManager.BuyedCafeLightingSystem", "SecondCafeManager.BuyedCafeManager",
+        "SecondCafeManager.ChangeWallMaterial", "SecondCafeManager.ChangeFloorMaterial", "SecondCafeManager.ChangeCeilingMaterial",
     };
 
     /// Civil.Update reads GameManager.player (the one to chase and hit when fighting) through
