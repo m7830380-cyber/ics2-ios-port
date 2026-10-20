@@ -28,6 +28,9 @@ SCENARIOS = {
     # guest: the bot hosts; the game has its own save (seeded) and joins from the main menu
     'join': ('join', 'guest', [], 'own-save', ['--fixture', FIXTURES], False),
     'join-mutant': ('join', 'guest', [], 'own-save', ['--fixture', FIXTURES, '--mutate'], True),
+    'economy-host': ('economy-host', 'host', [], None, [], False),
+    'economy-guest': ('economy-guest', 'guest', [], 'own-save', ['--fixture', FIXTURES], False),
+    'economy-guest-mutant': ('economy-guest', 'guest', [], 'own-save', ['--fixture', FIXTURES, '--mutate'], True),
 }
 
 

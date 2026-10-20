@@ -371,6 +371,16 @@ static class Program
         // SettingMenu.Start and skipped loading the remaining settings (volume, AA, motion blur ...)
         n += MakeNoOp(c, mod.GetType("SettingMenu"), "SetResolution");
 
+        // --- co-op: the host runs the shared world; on a guest these return at once ----------------
+        foreach (var (type, method) in new[]
+        {
+            ("CivilManager", "SendCustomer"),           // customers arrive (hourly)
+            ("CrackManager", "SpawnCrackOrder"),        // crack orders for the PC side job
+            ("SecondCafeManager", "CabinAddMoneyHours"),// second cafe income (hourly)
+            ("GameManager", "DailyChanges"),            // day rollover: bills, NPC resets, day++ (host sleeps)
+        })
+            n += GuardGuest(c, mod.GetType(type), method);
+
         // --- Enviro sky: Blit(CameraTarget, CameraTarget, sky) reads the target it writes. Metal keeps the old
         // frames ("hall of mirrors"); the sky shader never samples its source, so Platform.SkyBlit blits black.
         {
@@ -405,6 +415,19 @@ static class Program
             n++;
         }
         return n;
+    }
+
+    /// Prepends `if (Platform.IsCoopGuest) return;` to a void method.
+    static int GuardGuest(Ctx c, TypeDefinition t, string name)
+    {
+        var m = t?.Methods.FirstOrDefault(x => x.Name == name && x.ReturnType.FullName == "System.Void" && x.HasBody);
+        if (m == null) { c.Fail($"{t?.Name}.{name} missing (guest guard)"); return 0; }
+        var il = m.Body.GetILProcessor();
+        var first = m.Body.Instructions[0];
+        il.InsertBefore(first, il.Create(OpCodes.Call, c.ShimMethod("Platform", "get_IsCoopGuest")));
+        il.InsertBefore(first, il.Create(OpCodes.Brfalse, first));
+        il.InsertBefore(first, il.Create(OpCodes.Ret));
+        return 1;
     }
 
     static int MakeNoOp(Ctx c, TypeDefinition t, string name)

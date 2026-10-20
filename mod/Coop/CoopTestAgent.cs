@@ -35,6 +35,8 @@ namespace ICS2iOS
             if (EnviroSky.instance != null)
                 Line(sb, "time.hours", EnviroSky.instance.GameTime.Hours.ToString(Inv));
             PlayerSync.Report(sb);
+            WorldSync.Report(sb);
+            if (EnviroSky.instance != null) Line(sb, "time.hourf", EnviroSky.instance.internalHour.ToString("0.000", Inv));
         }
 
         public static void Run(int from, string command, string arg)
@@ -47,6 +49,13 @@ namespace ICS2iOS
                     break;
                 case "log":
                     Log.Info("test: " + arg);
+                    break;
+                case "money":
+                    // what every money change in the game does: edit the field directly
+                    GameManager.Instance.money += float.Parse(arg, Inv);
+                    break;
+                case "dailychanges":
+                    GameManager.Instance.DailyChanges();
                     break;
                 case "shotpuppet":
                     ShotPuppet(arg);

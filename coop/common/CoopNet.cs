@@ -18,6 +18,9 @@ namespace ICS2Coop
         TestReport = 201, // game -> bot: key=value lines
         TestCommand = 202,// bot -> game (test builds only): run a named test action
         WorldSnapshot = 3, // host -> joining client: the whole world as save JSON (FBPP)
+        MoneyDelta = 30,  // guest -> host: seq, amount the guest's game added to / took from the money
+        MoneyState = 31,  // host -> guest: authoritative total, last MoneyDelta seq applied for this guest
+        Clock = 32,       // host -> all: game day, Enviro day/year, hour of day (unreliable, 1/s)
     }
 
     /// Network layer shared by the game (Unity) and the headless test bot (.NET). It knows nothing about the

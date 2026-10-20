@@ -38,6 +38,13 @@ static class Program
                 case "puppets": Puppets(address, port, timeout, Flag(args, "--mutate")); break;
                 case "snapshot": Snapshot(address, port, timeout, Arg(args, "--fixture", "fixtures")); break;
                 case "join": JoinGuest(port, timeout, Arg(args, "--fixture", "fixtures"), Flag(args, "--mutate")); break;
+                case "economy-guest":
+                {
+                    int guest = JoinGuest(port, timeout, Arg(args, "--fixture", "fixtures"), false);
+                    EconomyGuest(guest, Flag(args, "--mutate"));
+                    break;
+                }
+                case "economy-host": EconomyHost(address, port, timeout); break;
                 default: throw new Fail("unknown scenario " + scenario);
             }
             Console.WriteLine("RESULT: PASS");
@@ -176,7 +183,7 @@ static class Program
     /// Stage 4b: the bot hosts with a known world (the fixture with money 12345 and day 7); a real game joins
     /// from its main menu, must load the cafe from that world into its session save, and keep its own
     /// language setting. --mutate: the bot sends day 7 but expects 8, so the run must FAIL.
-    static void JoinGuest(int port, int timeout, string fixtureDir, bool mutate)
+    static int JoinGuest(int port, int timeout, string fixtureDir, bool mutate)
     {
         var save = SaveJson.Parse(System.IO.File.ReadAllText(System.IO.Path.Combine(fixtureDir, "snapshot.json")));
         save.SetFloat("money", 12345f);
@@ -200,7 +207,118 @@ static class Program
         Expect(r["game.day"] == (mutate ? "8" : "7"), "guest day " + r["game.day"]);
         Expect(r["fbpp.language"] != "BOTLANG", "guest took the host's language setting");
         Say($"guest: money {r["game.money"]}, day {r["game.day"]}, language kept ({r["fbpp.language"]})");
+        return guest;
     }
+
+    /// Stage 3 (guest side, bot hosts): money totals and the clock from the host apply; a change on the guest
+    /// reaches the host once; a host change racing a guest change is merged, not lost; the guest does not
+    /// run the day rollover. --mutate: expects the race to lose the guest's change, so the run must FAIL.
+    static void EconomyGuest(int guest, bool mutate)
+    {
+        var deltas = new List<(int seq, float d)>();
+        s_Net.Message += (from, id, r) => { if (id == Msg.MoneyDelta) deltas.Add((r.GetInt(), r.GetFloat())); };
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+
+        MoneyState(guest, 20000f, 0);
+        WaitReportFrom(guest, r => r["money.synced"] == "True" && r["game.money"] == "20000", 10, "guest shows the host's money");
+
+        Clock(7, 15.5f);
+        var c = WaitReportFrom(guest, r => Math.Abs(float.Parse(r["time.hourf"], inv) - 15.5f) < 0.1f, 10, "guest clock jumps to 15:30");
+        Expect(c["game.day"] == "7", "guest day " + c["game.day"]);
+        Clock(7, 15.6f);
+        WaitReportFrom(guest, r => Math.Abs(float.Parse(r["time.hourf"], inv) - 15.6f) < 0.05f, 10, "guest clock follows small changes");
+
+        // the guest spends 150 (the game edits money directly, as the test command does)
+        Command("money", "-150", guest);
+        WaitFor(() => deltas.Count >= 1, 5, "the guest's money change");
+        Expect(deltas.Count == 1 && deltas[0].seq == 1 && Math.Abs(deltas[0].d + 150f) < 0.01f, $"guest sent {string.Join(",", deltas)}");
+        WaitReportFrom(guest, r => r["game.money"] == "19850", 5, "guest shows its own change before the host confirms");
+
+        // meanwhile the host earned 100 and has not applied the guest's change yet
+        MoneyState(guest, 20100f, 0);
+        string raced = mutate ? "20100" : "19950";
+        WaitReportFrom(guest, r => r["game.money"] == raced, 5, $"guest merges the host's +100 with its pending -150 ({raced})");
+
+        // the host applies the guest's change
+        MoneyState(guest, 19950f, 1);
+        WaitReportFrom(guest, r => r["game.money"] == "19950" && r["money.pending"] == "0", 5, "guest change confirmed");
+        Thread.Sleep(500);
+        Pump();
+        Expect(deltas.Count == 1, $"guest re-sent its change: {string.Join(",", deltas)}");
+
+        // the day rollover is the host's: on the guest DailyChanges returns at once
+        Command("dailychanges", "", guest);
+        Thread.Sleep(1500);
+        var d = WaitReportFrom(guest, r => true, 5, "after DailyChanges on the guest");
+        Expect(d["coop.guest"] == "True", "guest mode is off");
+        Expect(d["game.day"] == "7", "guest ran the day rollover itself: day " + d["game.day"]);
+        Expect(d["game.money"] == "19950", "money changed by the day rollover: " + d["game.money"]);
+    }
+
+    /// Stage 3 (host side, bot is the guest): the host applies a guest's money change once (repeats ignored),
+    /// confirms it, and broadcasts its clock.
+    static void EconomyHost(string address, int port, int timeout)
+    {
+        var states = new List<(float total, int ack)>();
+        var clocks = new List<(int day, float hour)>();
+        s_Net.Message += (from, id, r) =>
+        {
+            if (id == Msg.MoneyState) states.Add((r.GetFloat(), r.GetInt()));
+            else if (id == Msg.Clock) { int day = r.GetInt(); r.GetInt(); r.GetInt(); clocks.Add((day, r.GetFloat())); }
+        };
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        ConnectWithRetry(address, port, timeout);
+        WaitReport(r => r["game.ready"] == "True", 60, "game ready");
+        WaitFor(() => states.Count > 0, 5, "money state from the host");
+        float before = float.Parse(WaitReport(r => true, 5, "money")["game.money"], inv);
+        Expect(Math.Abs(states[states.Count - 1].total - before) < 0.01f, $"host sent {states[states.Count - 1].total}, has {before}");
+
+        SendMoneyDelta(1, -300f);
+        WaitFor(() => states.Count > 0 && states[states.Count - 1].ack == 1, 5, "host confirms change #1");
+        var after = WaitReport(r => true, 5, "money after");
+        Expect(Math.Abs(float.Parse(after["game.money"], inv) - (before - 300f)) < 0.01f, $"host money {after["game.money"]}, expected {before - 300f}");
+        Expect(Math.Abs(states[states.Count - 1].total - (before - 300f)) < 0.01f, "confirmed total " + states[states.Count - 1].total);
+
+        SendMoneyDelta(1, -300f); // repeated packet
+        Thread.Sleep(600);
+        var again = WaitReport(r => true, 5, "money after repeat");
+        Expect(Math.Abs(float.Parse(again["game.money"], inv) - (before - 300f)) < 0.01f, "repeated change applied twice: " + again["game.money"]);
+
+        int n = clocks.Count;
+        WaitFor(() => clocks.Count >= n + 2, 4, "two clock updates");
+        var rc = WaitReport(r => true, 5, "clock report");
+        float hourErr = Math.Abs(clocks[clocks.Count - 1].hour - float.Parse(rc["time.hourf"], inv));
+        Expect(hourErr < 0.05f, $"clock {clocks[clocks.Count - 1].hour} vs game {rc["time.hourf"]}");
+        Expect(clocks[clocks.Count - 1].day.ToString() == rc["game.day"], "clock day");
+        Say($"host: money {before} -> {before - 300f}, clock {clocks[clocks.Count - 1].hour:0.00}h day {clocks[clocks.Count - 1].day}");
+    }
+
+    static void MoneyState(int to, float total, int ack)
+    {
+        var w = s_Net.Begin(Msg.MoneyState);
+        w.Put(total);
+        w.Put(ack);
+        s_Net.SendTo(to);
+    }
+
+    static void SendMoneyDelta(int seq, float d)
+    {
+        var w = s_Net.Begin(Msg.MoneyDelta);
+        w.Put(seq);
+        w.Put(d);
+        s_Net.SendTo(0);
+    }
+
+    static void Clock(int day, float hour)
+    {
+        var w = s_Net.Begin(Msg.Clock);
+        w.Put(day);
+        w.Put(7);
+        w.Put(1);
+        w.Put(hour);
+        s_Net.SendAll();
+    }
+
 
     static Dictionary<string, string> WaitReportFrom(int player, Func<Dictionary<string, string>, bool> ok, int timeout, string what)
     {
@@ -209,12 +327,12 @@ static class Program
         finally { s_ReportTarget = 0; }
     }
 
-    static void Command(string command, string arg)
+    static void Command(string command, string arg, int to = 0)
     {
         var w = s_Net.Begin(Msg.TestCommand);
         w.Put(command);
         w.Put(arg ?? "");
-        s_Net.SendTo(0);
+        s_Net.SendTo(to);
     }
 
     static void SendState(int player, float time, float[] p, float yaw)

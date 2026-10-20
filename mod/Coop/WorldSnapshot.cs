@@ -91,6 +91,8 @@ namespace ICS2iOS
             var own = JsonUtility.FromJson<Model>(FBPP.GetSaveFileAsJson()) ?? new Model();
             KeepLocal(model, own);
             Platform.SaveFileName = SessionSaveFile;
+            Platform.IsCoopGuest = true;
+            WorldSync.ResetGuest();
             FBPP.Start(Config());
             FBPP.OverwriteLocalSaveFile(JsonUtility.ToJson(model));
             Log.Info($"coop: playing in the host's world (session save '{SessionSaveFile}'); " +
@@ -103,6 +105,7 @@ namespace ICS2iOS
         {
             if (!InSessionSave) return;
             Platform.SaveFileName = Platform.DefaultSaveFileName;
+            Platform.IsCoopGuest = false;
             FBPP.Start(Config());
             ForgetCache();
             s_ReloadOnMenu = true;

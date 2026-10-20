@@ -61,6 +61,10 @@ namespace ICS2Shim
 
         /// The game's save file name (it hardcodes "save-data.save" when it starts FBPP). A co-op guest plays
         /// in a separate session file so the host's world never overwrites the guest's own save.
+        /// True while this device is a guest in someone else's cafe: the patched game skips the systems that
+        /// only the host runs (customers arriving, crack orders, cabin income, day rollover).
+        public static bool IsCoopGuest { get; set; }
+
         public const string DefaultSaveFileName = "save-data.save";
         public static string SaveFileName { get; set; } = DefaultSaveFileName;
 
