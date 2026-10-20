@@ -94,6 +94,8 @@ namespace ICS2iOS
                 go.AddComponent<PrefSync>();
                 go.AddComponent<ActorSync>();
                 go.AddComponent<StateWatch>();
+                go.AddComponent<QuestSync>();
+                go.AddComponent<ScreenSync>();
                 go.AddComponent<CoopPanel>();
                 go.AddComponent<SkyGuard>();
                 go.AddComponent<DesktopButtons>();

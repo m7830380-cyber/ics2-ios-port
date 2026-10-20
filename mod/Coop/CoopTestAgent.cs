@@ -46,6 +46,8 @@ namespace ICS2iOS
             PrefSync.Report(sb);
             FightSync.Report(sb);
             StateWatch.Report(sb);
+            QuestSync.Report(sb);
+            ScreenSync.Report(sb);
             Line(sb, "items.tableTag", TableTag());
             Line(sb, "items.any", ItemSync.AnyWorldItemId().ToString(Inv));
             if (EnviroSky.instance != null) Line(sb, "time.hourf", EnviroSky.instance.internalHour.ToString("0.000", Inv));

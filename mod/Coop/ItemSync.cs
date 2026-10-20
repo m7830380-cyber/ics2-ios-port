@@ -305,13 +305,26 @@ namespace ICS2iOS
             }
         }
 
-        /// Thrown items: the thrower sends the motion until the item rests.
+        /// Thrown items: the thrower sends the motion until the item rests. An item that starts moving here by
+        /// itself (blown away by the bomb, knocked over, falling) is sent the same way by this device: on the
+        /// others it is kinematic and follows, so only one device's physics moves it.
         void StreamMoving()
         {
             int me = CoopSession.Net.LocalId;
+            bool claim = CoopSession.WorldReady;
             foreach (var t in s_Objects.Values)
             {
-                if (t == null || t.Owner != me) continue;
+                if (t == null) continue;
+                if (t.Owner < 0 && t.HeldBy < 0 && claim)
+                {
+                    var body = t.GetComponent<Rigidbody>();
+                    if (body != null && !body.isKinematic && !body.IsSleeping() && body.velocity.sqrMagnitude > 0.04f)
+                    {
+                        t.Owner = me;
+                        t.StillSince = -1f;
+                    }
+                }
+                if (t.Owner != me) continue;
                 var rb = t.GetComponent<Rigidbody>();
                 bool still = rb == null || rb.isKinematic || rb.IsSleeping() ||
                              (rb.velocity.sqrMagnitude < 0.0004f && rb.angularVelocity.sqrMagnitude < 0.0004f);

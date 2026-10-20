@@ -55,6 +55,8 @@ static class CoopHooks
         "Robber.OnTriggerEnter", "Bomberman.OnTriggerEnter", "Civil.OnTriggerEnter",
         // a fighting customer's blow (animation event): the host decides whose body it hits
         "Civil.Attacked",
+        // slot machines: the reels' symbols and who gets paid
+        "SlotRoll.Roll", "SlotMachineClub.RollEnded",
     };
 
     /// Civil.Update reads GameManager.player (the one to chase and hit when fighting) through

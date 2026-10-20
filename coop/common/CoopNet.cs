@@ -45,13 +45,15 @@ namespace ICS2Coop
         WatchActive = 66,    // a watched scene object was shown / hidden (shop shelves ...), both ways
         Elevators = 67,      // host -> guests: elevator cars: position, moving, direction (unreliable, 20/s while one moves)
         Dirt = 68,           // host -> joining guest: the dirt on the floor
+        QuestState = 69,     // the beggar's / hobo's quest numbers, markers, objective on screen, both ways
+        ScreenState = 70,    // the office PC's screen as the player at it sees it (shown parts, windows, text)
     }
 
     /// Network layer shared by the game (Unity) and the headless test bot (.NET). It knows nothing about the
     /// game: it connects players, finds hosts on the LAN and moves typed messages. The host is player 0.
     public sealed class CoopNet : INetEventListener
     {
-        public const int ProtocolVersion = 4;
+        public const int ProtocolVersion = 5;
         public const int DefaultPort = 27815;
         const string ConnectKey = "ics2coop/";
         const string DiscoverAsk = "ICS2COOP?";

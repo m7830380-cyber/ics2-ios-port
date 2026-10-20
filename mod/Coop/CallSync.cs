@@ -26,11 +26,14 @@ namespace ICS2iOS
     //   Hit         a fighting customer's blow: the host gives it to the player it went for (FightSync).
     //   Door        an elevator door: sent as "open" or "close", not as a toggle (a door that is half way on one
     //               device would otherwise go the other way there).
+    //   Slot        a slot machine pull: plays where it was pulled (that player paid and gets the win) and is
+    //               shown on the other devices. Its three reels stop on the same symbols everywhere (SlotReel:
+    //               each reel's dice use the pull's seed), and only the player who pulled is paid (SlotEnd).
     // A replay never changes money (the device that made the call already counted it) and its FBPP writes are
     // not sent again. Calls made inside a call that is already being replayed elsewhere are not sent again.
     public class CallSync : MonoBehaviour
     {
-        enum Rule { Mirror, Host, HostReplay, HostOnly, HostEcho, Punch, HostAlways, Hit, Door }
+        enum Rule { Mirror, Host, HostReplay, HostOnly, HostEcho, Punch, HostAlways, Hit, Door, Slot, SlotReel, SlotEnd }
 
         static readonly Dictionary<string, Rule> Rules = new Dictionary<string, Rule>
         {
@@ -70,7 +73,7 @@ namespace ICS2iOS
             ["Mascot.MascotGoHome"] = Rule.HostOnly, ["EmployeeManager.OpenMascot"] = Rule.HostOnly,
             ["Bouncer.SetTarget"] = Rule.HostOnly, ["CheckAIMoneyPayed.OnTriggerEnter"] = Rule.HostOnly,
             ["RivalInternetCafe.SetFakeCustomers"] = Rule.HostReplay, ["CİvilOptimizer.OpenRandomFiveCivils"] = Rule.HostOnly,
-            ["SlotMachineClub.Roll"] = Rule.Host, ["StripClubBouncer.EntranceFeePayed"] = Rule.Mirror,
+            ["SlotMachineClub.Roll"] = Rule.Slot, ["StripClubBouncer.EntranceFeePayed"] = Rule.Mirror,
             ["BunnyGirl.Payed"] = Rule.Host, ["PirateGamer.DeliveryCompleted"] = Rule.Host, ["Civil.DeliveredOrder"] = Rule.Host,
             ["TableController.Approved"] = Rule.HostEcho, ["TableController.Canceled"] = Rule.HostEcho,
             ["TableController.ExtraTimeApproved"] = Rule.HostEcho,
@@ -82,6 +85,7 @@ namespace ICS2iOS
             ["Civil.PunchSimulate"] = Rule.Host, ["Robber.PunchSimulate"] = Rule.Host, ["Bomberman.PunchRagdoll"] = Rule.Host,
             ["Robber.OnTriggerEnter"] = Rule.Punch, ["Bomberman.OnTriggerEnter"] = Rule.Punch, ["Civil.OnTriggerEnter"] = Rule.Punch,
             ["Civil.Attacked"] = Rule.Hit,
+            ["SlotRoll.Roll"] = Rule.SlotReel, ["SlotMachineClub.RollEnded"] = Rule.SlotEnd,
         };
 
         static bool s_Replaying;          // running a call that came from another device
@@ -89,6 +93,8 @@ namespace ICS2iOS
         static readonly Dictionary<string, MethodInfo> s_Methods = new Dictionary<string, MethodInfo>();
         static readonly List<string> s_Recent = new List<string>();
         static int s_Seed = Environment.TickCount;
+        static readonly Dictionary<SlotMachineClub, int> s_SlotSeeds = new Dictionary<SlotMachineClub, int>();
+        static readonly HashSet<SlotMachineClub> s_SlotShown = new HashSet<SlotMachineClub>();   // pulled elsewhere
 
         public static bool Replaying => s_Replaying;
 
@@ -108,6 +114,8 @@ namespace ICS2iOS
             // script): the host already gave that blow to whoever it hit
             if (rule == Rule.Hit) return guest || FightSync.HostHit(self as Civil);
             if (rule == Rule.HostAlways) return guest && CoopSession.WorldReady;
+            if (rule == Rule.SlotReel) { SlotReel(self as SlotRoll); return false; }
+            if (rule == Rule.SlotEnd) return SlotEnd(self as SlotMachineClub);
             if (s_Replaying)
             {
                 // the replay itself runs. The host running a guest's call also passes on the dice rolls inside
@@ -127,6 +135,14 @@ namespace ICS2iOS
                 {
                     case Rule.Mirror:
                         if (!covered) Send(self, action, args, -1);
+                        return false;
+                    case Rule.Slot:
+                        // a pull while the reels still turn does nothing (Roll checks rollAvailable)
+                        if (!covered && self is SlotMachineClub slot && slot.rollAvailable)
+                        {
+                            s_SlotShown.Remove(slot);
+                            s_SlotSeeds[slot] = Send(self, action, args, -1);
+                        }
                         return false;
                     case Rule.Door:
                         // a locked door does nothing (the game says "same floor as the elevator" here only)
@@ -164,7 +180,7 @@ namespace ICS2iOS
         }
 
         /// to = -1: everybody else (a guest's goes to the host, which replays and passes it on).
-        static void Send(object self, string action, object[] args, int to)
+        static int Send(object self, string action, object[] args, int to)
         {
             // the call runs now (or on the host) with this seed, and with the same seed everywhere else
             int seed = ++s_Seed * 7919 + Time.frameCount;
@@ -179,6 +195,7 @@ namespace ICS2iOS
             if (to < 0) CoopSession.Net.SendAll(); else CoopSession.Net.SendTo(to);
             s_Sent++;
             Note("sent " + action);
+            return seed;
         }
 
         // ---- remote calls ---------------------------------------------------------------------------------------
@@ -199,7 +216,7 @@ namespace ICS2iOS
             }
             catch (Exception e) { s_Failed++; Log.Error($"coop: bad call message {action}: {e.Message}"); return; }
             Rules.TryGetValue(action, out var rule);
-            if (CoopSession.IsHost && (rule == Rule.Mirror || rule == Rule.Door))
+            if (CoopSession.IsHost && (rule == Rule.Mirror || rule == Rule.Door || rule == Rule.Slot))
             {
                 // pass a guest's call on to the other guests
                 var w = CoopSession.Net.Begin(Msg.Call);
@@ -209,6 +226,7 @@ namespace ICS2iOS
             if (rule == Rule.Host && CoopSession.IsHost) { RunAsHost(self, action, args, seed); return; }
             if (rule == Rule.Punch && CoopSession.IsHost) { RunPunch(self, action, args); return; }
             if (rule == Rule.Door) { ReplayDoor(self, args, seed); return; }
+            if (rule == Rule.Slot) { ReplaySlot(self, seed); return; }
             Replay(self, action, args, seed, from);
         }
 
@@ -257,6 +275,36 @@ namespace ICS2iOS
                 s_Replayed++;
             }
             finally { if (door != null) door.locked = locked; }
+        }
+
+        /// Another player pulled a slot machine: the same pull here, shown only (no pay, no win).
+        static void ReplaySlot(UnityEngine.Object self, int seed)
+        {
+            var slot = self is GameObject go ? go.GetComponent<SlotMachineClub>() : self as SlotMachineClub;
+            if (slot == null) { s_Failed++; Log.Warn("coop: slot machine pull for a machine that is not here"); return; }
+            if (!slot.rollAvailable) return;   // still turning here: this pull is not shown
+            s_SlotSeeds[slot] = seed;
+            s_SlotShown.Add(slot);
+            Replay(slot, "SlotMachineClub.Roll", new object[0], seed, 0);
+        }
+
+        /// A reel starts turning: its symbol comes from the pull's seed, so it is the same on every device (the
+        /// 2nd and 3rd reels start half a second later, out of the pull's own call).
+        static void SlotReel(SlotRoll reel)
+        {
+            if (reel == null || reel.myMachine == null || !s_SlotSeeds.TryGetValue(reel.myMachine, out int seed)) return;
+            UnityEngine.Random.InitState(seed * 31 + reel.rollNumber);
+        }
+
+        /// The reels stopped. Where the machine was pulled, the game pays the win as usual; a pull shown from
+        /// another device pays nothing here (the money comes with the other player's win, no popup either).
+        static bool SlotEnd(SlotMachineClub slot)
+        {
+            if (slot == null || !s_SlotShown.Remove(slot)) return false;
+            // what RollEnded does besides paying: the turning sound stops, the lever is free again in a second
+            if (slot.slotMachineLoopSource != null) slot.slotMachineLoopSource.enabled = false;
+            slot.Invoke("setrollavailable", 1f);
+            return true;
         }
 
         static void Replay(UnityEngine.Object self, string action, object[] args, int seed, int from)

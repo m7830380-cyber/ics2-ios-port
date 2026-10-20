@@ -36,6 +36,7 @@ namespace ICS2iOS
         static Civil[] s_Civils;
         static AnimSync.Layout[] s_Params;
         static Mirror[] s_Last, s_Target;
+        static bool[] s_Ragdoll;                 // guest: knocked down here (bones on physics)
         static bool s_GuestSetup;
         float m_NextSend, m_NextFull, m_NextRequestCheck, m_NextLinks;
         static readonly Dictionary<TableController, int> s_OpenRequests = new Dictionary<TableController, int>();
@@ -57,6 +58,7 @@ namespace ICS2iOS
             s_Params = new AnimSync.Layout[s_Civils.Length];
             s_Last = new Mirror[s_Civils.Length];
             s_Target = new Mirror[s_Civils.Length];
+            s_Ragdoll = new bool[s_Civils.Length];
             for (int i = 0; i < s_Civils.Length; i++)
                 s_Params[i] = AnimSync.LayoutOf(s_Civils[i] != null ? s_Civils[i].anim : null);
             return true;
@@ -261,11 +263,45 @@ namespace ICS2iOS
                 SetProp(c.TenDollar, (m.Props & 16) != 0);
                 SetProp(c.TwentyDollar, (m.Props & 32) != 0);
                 SetProp(c.noPayedObj, (m.Props & 64) != 0);
-                AnimSync.Apply(c.anim, s_Params[i], m.Anim);
+                bool down = m.Enum == (byte)CivilEnum.Dead;
+                SetRagdoll(i, down);
+                if (!down) AnimSync.Apply(c.anim, s_Params[i], m.Anim);
             }
         }
 
         static void SetProp(GameObject go, bool on) { if (go != null && go.activeSelf != on) go.SetActive(on); }
+
+        /// Knocked down / killed on the host (Civil.RagdollON): the body falls here too, by this device's own
+        /// physics, and stands up again when the host's does (RagdollOFF). Without this the guest's copy froze
+        /// in its last pose (its animator gets no more states from a dead person) and vanished later.
+        static void SetRagdoll(int i, bool on)
+        {
+            if (s_Ragdoll[i] == on) return;
+            s_Ragdoll[i] = on;
+            var c = s_Civils[i];
+            try
+            {
+                if (c.anim != null) c.anim.enabled = !on;
+                // pushed away from whoever stands closest here (the host pushes along its hitter's view)
+                var push = -c.transform.forward;
+                var me = GameManager.Instance != null ? GameManager.Instance.player : null;
+                if (me != null)
+                {
+                    var d = c.transform.position - me.position; d.y = 0f;
+                    if (d.sqrMagnitude < 16f && d.sqrMagnitude > 1e-4f) push = d.normalized;
+                }
+                foreach (var rb in c.GetComponentsInChildren<Rigidbody>(true))
+                {
+                    if (rb.gameObject == c.gameObject) continue;   // the root follows the host's position
+                    rb.isKinematic = false;
+                    rb.useGravity = on;
+                    if (on) { rb.velocity = Vector3.zero; rb.AddForce(push * 300f); }
+                }
+                foreach (var col in c.GetComponentsInChildren<Collider>(true))
+                    if (col.gameObject != c.gameObject) col.enabled = on;
+            }
+            catch (System.Exception e) { Log.Warn($"coop: ragdoll of customer {i}: {e.Message}"); }
+        }
 
         static void Smooth()
         {
@@ -274,7 +310,7 @@ namespace ICS2iOS
             {
                 var m = s_Target[i];
                 var c = s_Civils[i];
-                if (m == null || c == null || !c.gameObject.activeSelf) continue;
+                if (m == null || c == null || !c.gameObject.activeSelf || s_Ragdoll[i]) continue;
                 c.transform.position = Vector3.Lerp(c.transform.position, m.Pos, k);
                 c.transform.rotation = Quaternion.Slerp(c.transform.rotation, Quaternion.Euler(0f, m.Yaw, 0f), k);
             }
