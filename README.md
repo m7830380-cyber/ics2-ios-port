@@ -17,3 +17,10 @@ lives in a private repo. You need your own copy of the game.
 * `tools/package_ipa.py` – merges the shell IPA with the converted data.
 
 Log: `Documents/InternetCafeSim2-iOS.log` (previous run: `-prev.log`). Tap the FPS counter to see it on screen.
+
+## Windows co-op build
+
+`windows/` holds an installer that makes a co-op copy of the player's own Steam install next to it (hard links,
+the Steam install is only read). `python tools/make_windows_pack.py --build build-N` zips the installer with the
+patched assemblies; the zip contains game code and goes to the private repo's releases only. Co-op works on the
+same LAN and over Radmin VPN (discovery broadcasts on every network, the panel lists every address).

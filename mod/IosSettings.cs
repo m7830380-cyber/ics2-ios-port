@@ -18,6 +18,9 @@ namespace ICS2iOS
         public static int FrameRate = 60;           // 30 or 60
         public static float RenderScale = 1f;       // 0.5 .. 1 of the native resolution
         public static int Quality = 1;              // 0 low, 1 medium, 2 high (shadows, post-processing)
+        // Unity's own sky instead of the Enviro sky cameras (SkyGuard); the default on iPhone, where the Enviro
+        // sky left old frames in the sky
+        public static bool SimpleSky = Application.platform == RuntimePlatform.IPhonePlayer;
         public static bool RealWeather;             // off by default: live weather would send the IP address to a weather service
         public static string CoopName = "";         // name shown to the other players (empty: device name)
         public static string CoopLastAddress = "";  // last address typed into "Join by address"
@@ -46,6 +49,7 @@ namespace ICS2iOS
                 RenderScale = F(d, "render.scale", RenderScale, 0.5f, 1f);
                 Quality = (int)F(d, "quality", Quality, 0, 2);
                 RealWeather = B(d, "weather.real", RealWeather);
+                SimpleSky = B(d, "sky.simple", SimpleSky);
                 if (d.TryGetValue("coop.name", out var cn)) CoopName = cn;
                 if (d.TryGetValue("coop.address", out var ca)) CoopLastAddress = ca;
             }
@@ -71,6 +75,7 @@ namespace ICS2iOS
                     "render.scale=" + RenderScale.ToString(ci),
                     "quality=" + Quality,
                     "weather.real=" + RealWeather,
+                    "sky.simple=" + SimpleSky,
                     "coop.name=" + CoopName.Replace("\n", " "),
                     "coop.address=" + CoopLastAddress,
                 });

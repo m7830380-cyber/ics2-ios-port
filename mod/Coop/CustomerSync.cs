@@ -13,7 +13,7 @@ namespace ICS2iOS
     // scene, so index i is the same person on every device).
     //
     // The host runs them. A guest switches their AI and navigation off and shows them where the host has them:
-    // position, facing, animation (bool / int parameters), state (waiting to pay, price) and the props they
+    // position, facing, animation (parameters and animator states, see AnimSync), state (waiting to pay, price) and the props they
     // hold (cash, cigarette, "did not pay" timer). They keep their colliders, so the guest can still look at a
     // customer and press the key to take the cash; that, and answering PC requests in the CafeSoft app, is
     // sent to the host, which runs the game's own code for it (Platform.Forward hooks in the patched game).
@@ -29,13 +29,12 @@ namespace ICS2iOS
             public float Yaw;
             public byte Enum, Props;
             public float Price, Patience;
-            public int Bools;
-            public int[] Ints;
+            public AnimSync.State Anim;
             public bool Sitting;
         }
 
         static Civil[] s_Civils;
-        static AnimatorControllerParameter[][] s_Params;
+        static AnimSync.Layout[] s_Params;
         static Mirror[] s_Last, s_Target;
         static bool s_GuestSetup;
         float m_NextSend, m_NextFull, m_NextRequestCheck, m_NextLinks;
@@ -55,18 +54,11 @@ namespace ICS2iOS
             var cm = GameManager.Instance != null ? GameManager.Instance.civilManager : null;
             if (cm == null || cm.allCivils == null) return false;
             s_Civils = cm.allCivils;
-            s_Params = new AnimatorControllerParameter[s_Civils.Length][];
+            s_Params = new AnimSync.Layout[s_Civils.Length];
             s_Last = new Mirror[s_Civils.Length];
             s_Target = new Mirror[s_Civils.Length];
             for (int i = 0; i < s_Civils.Length; i++)
-            {
-                var a = s_Civils[i] != null ? s_Civils[i].anim : null;
-                var list = new List<AnimatorControllerParameter>();
-                if (a != null && a.runtimeAnimatorController != null)
-                    foreach (var p in a.parameters)
-                        if (p.type == AnimatorControllerParameterType.Bool || p.type == AnimatorControllerParameterType.Int) list.Add(p);
-                s_Params[i] = list.ToArray();
-            }
+                s_Params[i] = AnimSync.LayoutOf(s_Civils[i] != null ? s_Civils[i].anim : null);
             return true;
         }
 
@@ -107,18 +99,7 @@ namespace ICS2iOS
             if (c.TwentyDollar != null && c.TwentyDollar.activeSelf) props |= 32;
             if (c.noPayedObj != null && c.noPayedObj.activeSelf) props |= 64;
             m.Props = props;
-            var ps = s_Params[i];
-            m.Ints = new int[0];
-            if (c.anim != null && ps.Length > 0 && c.anim.isActiveAndEnabled)
-            {
-                var ints = new List<int>();
-                for (int k = 0; k < ps.Length && k < 32; k++)
-                {
-                    if (ps[k].type == AnimatorControllerParameterType.Bool) { if (c.anim.GetBool(ps[k].nameHash)) m.Bools |= 1 << k; }
-                    else ints.Add(c.anim.GetInteger(ps[k].nameHash));
-                }
-                m.Ints = ints.ToArray();
-            }
+            m.Anim = AnimSync.Capture(c.anim, s_Params[i]);
             return m;
         }
 
@@ -127,11 +108,9 @@ namespace ICS2iOS
             if (a == null || a.Active != b.Active) return true;
             if (!b.Active) return false;
             if ((a.Pos - b.Pos).sqrMagnitude > 0.0004f || Mathf.Abs(Mathf.DeltaAngle(a.Yaw, b.Yaw)) > 1f) return true;
-            if (a.Enum != b.Enum || a.Props != b.Props || a.Bools != b.Bools || a.Sitting != b.Sitting || Mathf.Abs(a.Price - b.Price) > 0.01f) return true;
+            if (a.Enum != b.Enum || a.Props != b.Props || a.Sitting != b.Sitting || Mathf.Abs(a.Price - b.Price) > 0.01f) return true;
             if (Mathf.Abs(a.Patience - b.Patience) > 0.5f) return true;
-            if (a.Ints.Length != b.Ints.Length) return true;
-            for (int k = 0; k < a.Ints.Length; k++) if (a.Ints[k] != b.Ints[k]) return true;
-            return false;
+            return AnimSync.Changed(a.Anim, b.Anim);
         }
 
         static void SendStates(bool full)
@@ -158,9 +137,7 @@ namespace ICS2iOS
                     w.Put(m.Pos.x); w.Put(m.Pos.y); w.Put(m.Pos.z);
                     w.Put(m.Yaw);
                     w.Put(m.Enum); w.Put(m.Price); w.Put(m.Patience); w.Put(m.Sitting); w.Put(m.Props);
-                    w.Put(m.Bools);
-                    w.Put((byte)m.Ints.Length);
-                    foreach (int v in m.Ints) w.Put((short)v);
+                    AnimSync.Write(w, m.Anim);
                 }
                 count++;
                 if (w.Length > ChunkBytes) { Flush(w, countPos, count); w = null; }
@@ -266,10 +243,7 @@ namespace ICS2iOS
                 m.Pos = new Vector3(r.GetFloat(), r.GetFloat(), r.GetFloat());
                 m.Yaw = r.GetFloat();
                 m.Enum = r.GetByte(); m.Price = r.GetFloat(); m.Patience = r.GetFloat(); m.Sitting = r.GetBool(); m.Props = r.GetByte();
-                m.Bools = r.GetInt();
-                int ni = r.GetByte();
-                m.Ints = new int[ni];
-                for (int k = 0; k < ni; k++) m.Ints[k] = r.GetShort();
+                m.Anim = AnimSync.Read(r);
                 if (c == null) continue;
                 bool wasActive = c.gameObject.activeSelf;
                 if (!wasActive) c.gameObject.SetActive(true);
@@ -287,17 +261,7 @@ namespace ICS2iOS
                 SetProp(c.TenDollar, (m.Props & 16) != 0);
                 SetProp(c.TwentyDollar, (m.Props & 32) != 0);
                 SetProp(c.noPayedObj, (m.Props & 64) != 0);
-                var ps = s_Params[i];
-                if (c.anim != null && c.anim.isActiveAndEnabled)
-                {
-                    if (!c.anim.enabled) c.anim.enabled = true;
-                    int ii = 0;
-                    for (int k = 0; k < ps.Length && k < 32; k++)
-                    {
-                        if (ps[k].type == AnimatorControllerParameterType.Bool) c.anim.SetBool(ps[k].nameHash, (m.Bools & (1 << k)) != 0);
-                        else if (ii < m.Ints.Length) c.anim.SetInteger(ps[k].nameHash, m.Ints[ii++]);
-                    }
-                }
+                AnimSync.Apply(c.anim, s_Params[i], m.Anim);
             }
         }
 
@@ -319,8 +283,8 @@ namespace ICS2iOS
         /// Guest side of the Platform.Forward hooks.
         static bool Forward(object self, string action, int arg)
         {
+            if (!CoopSession.IsClient || CallSync.Replaying) return false;   // a replay of the host's call runs here
             Log.Info($"coop: guest action {action} ({arg})");
-            if (!CoopSession.IsClient) return false;
             switch (action)
             {
                 case "TableController.Approved":
@@ -443,7 +407,7 @@ namespace ICS2iOS
                 sb.Append(k).Append(".price=").Append(c.payedPrice.ToString("0.##", inv)).Append('\n');
                 sb.Append(k).Append(".ai=").Append(c.enabled).Append('\n');
                 var names = new List<string>();
-                foreach (var prm in s_Params[i]) names.Add(prm.name);
+                foreach (var prm in s_Params[i].Params) names.Add(prm.name);
                 sb.Append(k).Append(".params=").Append(string.Join(",", names)).Append('\n');
                 sb.Append(k).Append(".walk=").Append(c.anim != null && c.anim.isActiveAndEnabled && c.anim.GetBool("walk")).Append('\n');
             }

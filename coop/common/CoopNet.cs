@@ -35,13 +35,22 @@ namespace ICS2Coop
         RequestAnswer = 53,  // guest -> host: table id, 0 approve / 1 refuse
         CustomerAction = 54, // guest -> host: customer index, action (1 = cash taken), argument
         TableLinks = 55,     // host -> guests: which customer uses which PC table (1/s)
+        Call = 60,           // a mirrored game call: action, seed, target object, arguments (CallSync)
+        PrefSet = 61,        // FBPP keys written (progress: quests, rooms, skills ...), both ways
+        ActorTable = 62,     // host -> joining guest: scene paths of the town's other people and animals
+        ActorStates = 63,    // host -> guests: their on/off, pose, animators, props, ragdoll (unreliable, chunks)
+        WatchAnim = 64,      // a scene animator's parameters changed (doors, trays ...), both ways
+        WatchField = 65,     // a watched field changed (tip box, cash register, fridge ...), both ways
+        WatchActive = 66,    // a watched scene object was shown / hidden (shop shelves ...), both ways
+        Elevators = 67,      // host -> guests: elevator car positions (unreliable, 2/s)
+        Dirt = 68,           // host -> joining guest: the dirt on the floor
     }
 
     /// Network layer shared by the game (Unity) and the headless test bot (.NET). It knows nothing about the
     /// game: it connects players, finds hosts on the LAN and moves typed messages. The host is player 0.
     public sealed class CoopNet : INetEventListener
     {
-        public const int ProtocolVersion = 1;
+        public const int ProtocolVersion = 2;
         public const int DefaultPort = 27815;
         const string ConnectKey = "ics2coop/";
         const string DiscoverAsk = "ICS2COOP?";
@@ -116,6 +125,69 @@ namespace ICS2Coop
             m_Writer.Reset();
             m_Writer.Put(DiscoverAsk);
             Net.SendBroadcast(m_Writer, port);
+            // a broadcast to 255.255.255.255 only leaves through the main network card: also send one to each
+            // network's own broadcast address, so hosts on virtual LANs (Radmin VPN, Hamachi, ZeroTier) answer
+            foreach (var la in LocalAddresses())
+            {
+                if (la.Broadcast == null) continue;
+                try { Net.SendUnconnectedMessage(m_Writer, new IPEndPoint(la.Broadcast, port)); }
+                catch (Exception e) { Log($"discovery on {la.Label} failed: {e.Message}"); }
+            }
+        }
+
+        /// One IPv4 address of this device: which network it is on, and that network's broadcast address.
+        public sealed class LocalAddress
+        {
+            public string Label;
+            public IPAddress Address, Broadcast;
+            public override string ToString() => Label + ": " + Address;
+        }
+
+        /// Every IPv4 address this device has on a working network (not loopback). Virtual LANs are named:
+        /// Radmin VPN uses 26.x.x.x, Hamachi 25.x.x.x. Nothing is sent to find them.
+        public static List<LocalAddress> LocalAddresses()
+        {
+            var list = new List<LocalAddress>();
+            try
+            {
+                foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up &&
+                        ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Unknown) continue;
+                    if (ni.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback) continue;
+                    string desc = (ni.Description ?? "") + " " + (ni.Name ?? "");
+                    foreach (var ua in ni.GetIPProperties().UnicastAddresses)
+                    {
+                        var a = ua.Address;
+                        if (a.AddressFamily != AddressFamily.InterNetwork) continue;
+                        var b = a.GetAddressBytes();
+                        if (b[0] == 127 || (b[0] == 169 && b[1] == 254)) continue;
+                        list.Add(new LocalAddress { Label = NetworkLabel(desc, b), Address = a, Broadcast = BroadcastOf(ua, b) });
+                    }
+                }
+            }
+            catch (Exception) { }
+            return list;
+        }
+
+        static string NetworkLabel(string desc, byte[] b)
+        {
+            if (desc.IndexOf("Radmin", StringComparison.OrdinalIgnoreCase) >= 0 || b[0] == 26) return "Radmin VPN";
+            if (desc.IndexOf("Hamachi", StringComparison.OrdinalIgnoreCase) >= 0 || b[0] == 25) return "Hamachi";
+            if (desc.IndexOf("ZeroTier", StringComparison.OrdinalIgnoreCase) >= 0) return "ZeroTier";
+            if (desc.IndexOf("Tailscale", StringComparison.OrdinalIgnoreCase) >= 0) return "Tailscale";
+            return IsPrivate(new IPAddress(b)) ? "Wi-Fi / LAN" : "Network";
+        }
+
+        static IPAddress BroadcastOf(System.Net.NetworkInformation.UnicastIPAddressInformation ua, byte[] b)
+        {
+            byte[] m = null;
+            try { m = ua.IPv4Mask?.GetAddressBytes(); } catch (Exception) { }
+            if (m == null || m.Length != 4 || (m[0] == 0 && m[1] == 0 && m[2] == 0 && m[3] == 0))
+                m = b[0] == 26 || b[0] == 25 || b[0] == 10 ? new byte[] { 255, 0, 0, 0 } : new byte[] { 255, 255, 255, 0 };
+            var r = new byte[4];
+            for (int i = 0; i < 4; i++) r[i] = (byte)(b[i] | ~m[i]);
+            return new IPAddress(r);
         }
 
         /// Also asks every address of this device's /24 network directly (works where broadcasts are blocked,
@@ -171,7 +243,7 @@ namespace ICS2Coop
             return null;
         }
 
-        static bool IsPrivate(IPAddress a)
+        public static bool IsPrivate(IPAddress a)
         {
             var b = a.GetAddressBytes();
             return b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168);

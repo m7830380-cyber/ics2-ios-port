@@ -72,7 +72,9 @@ static class Program
             if (!NoInputRedirect.Contains(asm.Name.Name))
                 n += RedirectInput(ctx);
             if (asm.Name.Name == "Assembly-CSharp")
-                n += PatchGame(ctx);
+                n += PatchGame(ctx) + CoopHooks.PatchCalls(ctx);
+            if (asm.Name.Name == "FileBasedPrefs")
+                n += CoopHooks.PatchPrefs(ctx);
             total += n;
             failures += ctx.Failures;
             asm.Write(Path.Combine(outDir, name));
@@ -83,7 +85,7 @@ static class Program
         return failures == 0 ? 0 : 2;
     }
 
-    sealed class Ctx
+    internal sealed class Ctx
     {
         public readonly ModuleDefinition Mod;
         public readonly ModuleDefinition Shim;
@@ -379,6 +381,7 @@ static class Program
             ("SecondCafeManager", "CabinAddMoneyHours"),// second cafe income (hourly)
             ("FamilyManager", "CheckWorkers"),          // wife / son earnings (hourly)
             ("GameManager", "DailyChanges"),            // day rollover: bills, NPC resets, day++ (host sleeps)
+            ("CashRegister", "Update"),                 // the till fills up by itself now and then (dice)
             ("SaveManager", "Save"),                    // the world is saved by the host (Save also runs daily
                                                         // side effects: coin prices, employee work days)
         })

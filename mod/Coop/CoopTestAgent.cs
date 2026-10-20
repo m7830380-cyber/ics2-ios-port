@@ -41,9 +41,47 @@ namespace ICS2iOS
             WorldSync.Report(sb);
             ItemSync.Report(sb, Detail(detail, "items"));
             CustomerSync.Report(sb, Detail(detail, "civs"));
+            ActorSync.Report(sb, Detail(detail, "actors"));
+            CallSync.Report(sb);
+            PrefSync.Report(sb);
+            StateWatch.Report(sb);
             Line(sb, "items.tableTag", TableTag());
             Line(sb, "items.any", ItemSync.AnyWorldItemId().ToString(Inv));
             if (EnviroSky.instance != null) Line(sb, "time.hourf", EnviroSky.instance.internalHour.ToString("0.000", Inv));
+            WorldReport(sb);
+        }
+
+        /// The shared world at a glance: doors, bills, rooms bought, a test progress key, weather, animals.
+        static void WorldReport(StringBuilder sb)
+        {
+            var gm = GameManager.Instance;
+            if (gm == null) return;
+            var doors = Sorted(Object.FindObjectsOfType<Door>(true));
+            var bits = new StringBuilder();
+            foreach (var d in doors) bits.Append(d.doorAnim != null && d.doorAnim.isActiveAndEnabled && d.doorAnim.GetBool("open") ? '1' : '0');
+            Line(sb, "world.doors", bits.ToString());
+            int usable = System.Array.FindIndex(doors, d => d.doorAnim != null && d.doorAnim.isActiveAndEnabled && !d.doorLock && !d.closecafe);
+            Line(sb, "world.doorpick", usable.ToString(Inv));
+            Line(sb, "world.bills", gm.billManager != null ? gm.billManager.bills.Count.ToString(Inv) : "-1");
+            bits.Clear();
+            foreach (var u in Sorted(Object.FindObjectsOfType<UpgradeItem>(true))) bits.Append(u.buyed ? '1' : '0');
+            Line(sb, "world.upgrades", bits.ToString());
+            Line(sb, "world.testpref", FBPP.GetString("cooptestkey"));
+            var e = EnviroSky.instance;
+            Line(sb, "world.weather", e != null && e.Weather != null && e.Weather.currentActiveWeatherPreset != null ? e.Weather.currentActiveWeatherPreset.Name : "");
+            bits.Clear();
+            foreach (var c in Sorted(Object.FindObjectsOfType<Cat>(true))) bits.Append(c.gameObject.activeInHierarchy ? '1' : '0');
+            bits.Append('/');
+            foreach (var c in Sorted(Object.FindObjectsOfType<Dog>(true))) bits.Append(c.gameObject.activeInHierarchy ? '1' : '0');
+            Line(sb, "world.animals", bits.ToString());
+            Line(sb, "world.tipbox", SaveManager.Instance != null && SaveManager.Instance.tipBox != null ? SaveManager.Instance.tipBox.tipboxmoney.ToString("0.##", Inv) : "");
+            Line(sb, "player.atpc", (gm.computer != null && gm.computer.playerComputer != null && gm.computer.playerComputer.enterPc).ToString());
+        }
+
+        static T[] Sorted<T>(T[] list) where T : Component
+        {
+            System.Array.Sort(list, (a, b) => string.CompareOrdinal(NetRef.PathOf(a.transform), NetRef.PathOf(b.transform)));
+            return list;
         }
 
         /// "items=1,2;civs=3" -> Detail(.., "civs") = "3"
@@ -187,9 +225,125 @@ namespace ICS2iOS
                 case "dailychanges":
                     GameManager.Instance.DailyChanges();
                     break;
+                case "tp":
+                {
+                    // move the player ("x,y,z"), for looking at places (the sky outside)
+                    var v = arg.Split(',');
+                    var pl = GameManager.Instance.player;
+                    var cc = pl.GetComponent<CharacterController>();
+                    if (cc != null) cc.enabled = false;
+                    pl.position = new Vector3(float.Parse(v[0], Inv), float.Parse(v[1], Inv), float.Parse(v[2], Inv));
+                    if (cc != null) cc.enabled = true;
+                    break;
+                }
+                case "look":
+                {
+                    // camera pitch in degrees (negative: up)
+                    var cam = GameManager.Instance.playerCamera;
+                    if (cam != null) cam.transform.localRotation = Quaternion.Euler(float.Parse(arg, Inv), 0f, 0f);
+                    break;
+                }
+                case "sky":
+                    IosSettings.SimpleSky = arg == "simple";
+                    IosSettings.Save();
+                    break;
                 case "shotpuppet":
                     ShotPuppet(arg);
                     break;
+                case "lights":
+                {
+                    // the light switch (PlayerRay "lightswitch")
+                    var ls = GameManager.Instance.lightSwitch;
+                    if (ls.lightsOn) ls.CloseLight(); else ls.OpenLight();
+                    break;
+                }
+                case "power":
+                {
+                    var es = GameManager.Instance.electricalSwitch;
+                    if (es.electric) es.SwitchClosed(); else es.SwitchOpened();
+                    break;
+                }
+                case "door":
+                {
+                    // PlayerRay "door" / "garagedoor": open or close by the animator's state
+                    var d = Sorted(Object.FindObjectsOfType<Door>(true))[int.Parse(arg, Inv)];
+                    if (d.doorAnim.GetBool("open")) d.CloseDoor(); else d.OpenDoor();
+                    break;
+                }
+                case "pref":
+                    FBPP.SetString("cooptestkey", arg);
+                    break;
+                case "dirt":
+                    for (int i = 0; i < int.Parse(arg, Inv); i++) GameManager.Instance.footstepsManager.RandomSpawnTrash();
+                    break;
+                case "mop":
+                {
+                    // the mop's sweep (PlayerRay.SweepCompleted -> FootstepsManager.DestroyMe) on the first bit of dirt
+                    var fm = GameManager.Instance.footstepsManager;
+                    foreach (var area in fm.footprintsSpawnAreas)
+                        foreach (var go in area.SpawnedDirtyObjects)
+                            if (go != null && go.GetComponent<Trash>() != null) { fm.DestroyMe(go.GetComponent<Trash>()); return; }
+                    Log.Warn("test: mop: no dirt");
+                    break;
+                }
+                case "bill":
+                    GameManager.Instance.billManager.SpawnNewBill("Co-op test", float.Parse(arg, Inv), 5);
+                    break;
+                case "paybill":
+                {
+                    var bm = GameManager.Instance.billManager;
+                    if (bm.bills.Count > 0) bm.bills[bm.bills.Count - 1].PayBtn();
+                    else Log.Warn("test: paybill: no bill");
+                    break;
+                }
+                case "upgrade":
+                {
+                    // the cheapest room not bought yet (PC app "My cafe" > Buy)
+                    UpgradeItem best = null;
+                    foreach (var u in Object.FindObjectsOfType<UpgradeItem>(true))
+                        if (!u.buyed && u.type != "texture" && (best == null || u.price < best.price)) best = u;
+                    if (best == null) { Log.Warn("test: upgrade: nothing to buy"); break; }
+                    Log.Info($"test: buying upgrade {best.number} for {best.price}");
+                    best.Buy();
+                    break;
+                }
+                case "elevator":
+                {
+                    // a "go to" button of the first elevator: the one whose floor is farthest from the car
+                    var buttons = Object.FindObjectsOfType<OldElevator.ElevatorButton>(true);
+                    System.Array.Sort(buttons, (a, b) => string.CompareOrdinal(NetRef.PathOf(a.transform), NetRef.PathOf(b.transform)));
+                    var b0 = buttons.Length > int.Parse(arg, Inv) ? buttons[int.Parse(arg, Inv)] : null;
+                    if (b0 == null) { Log.Warn("test: elevator: no such button"); break; }
+                    Log.Info($"test: pressing elevator button '{b0.name}' ({b0.buttonType})");
+                    b0.Press();
+                    break;
+                }
+                case "elevatorbuttons":
+                {
+                    var buttons = Object.FindObjectsOfType<OldElevator.ElevatorButton>(true);
+                    System.Array.Sort(buttons, (a, b) => string.CompareOrdinal(NetRef.PathOf(a.transform), NetRef.PathOf(b.transform)));
+                    for (int i = 0; i < buttons.Length; i++)
+                        Log.Info($"test: elevator button {i}: '{NetRef.PathOf(buttons[i].transform)}' {buttons[i].buttonType} -> {(buttons[i].destination != null ? buttons[i].destination.position.y.ToString("0.00", Inv) : "-")}");
+                    break;
+                }
+                case "pc":
+                {
+                    // E on the own PC (PlayerRay "playerComputer"), Q to leave
+                    var pc = GameManager.Instance.computer.playerComputer;
+                    var ray = GameManager.Instance.playerRay;
+                    if (arg == "enter") { ray.currentPlayerComputer = pc; pc.EnterComputer(); }
+                    else pc.ExitComputer();
+                    break;
+                }
+                case "punchciv":
+                {
+                    // a fist lands on customer <i> (the guest's punch collider entering its trigger)
+                    var c = GameManager.Instance.civilManager.allCivils[int.Parse(arg, Inv)];
+                    var punch = GameManager.Instance.playerRay.allPunch[0].GetComponent<Collider>();
+                    typeof(Civil).GetMethod("OnTriggerEnter", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                        .Invoke(c, new object[] { punch });
+                    break;
+                }
                 default:
                     Log.Warn($"test: unknown command '{command}'");
                     break;

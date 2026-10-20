@@ -59,6 +59,7 @@ namespace ICS2iOS
         static bool s_Applying; // applying a remote change: the local watchers must not echo it
 
         public static int Count => s_Objects.Count;
+        public static bool Ready => s_Ready;
         static int s_Missing, s_Extra;
 
         void OnEnable()

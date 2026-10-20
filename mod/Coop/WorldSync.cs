@@ -79,6 +79,7 @@ namespace ICS2iOS
                 w.Put(e.GameTime.Days);
                 w.Put(e.GameTime.Years);
                 w.Put(e.internalHour);
+                w.Put(WeatherName(e));
                 CoopSession.Net.SendAll(DeliveryMethod.Sequenced);
             }
         }
@@ -92,8 +93,19 @@ namespace ICS2iOS
         }
 
         // ---- guest --------------------------------------------------------------------------------------
+        static readonly System.Reflection.FieldInfo[] s_HostTimers =
+        {
+            // GameManager's own dice: robber, bomber, blackouts, mining income. The host rolls them.
+            typeof(GameManager).GetField("robberTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance),
+            typeof(GameManager).GetField("bomberTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance),
+            typeof(GameManager).GetField("electricalswitchtimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance),
+            typeof(GameManager).GetField("minerEarnCoinTimer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance),
+        };
+
         static void GuestUpdate(GameManager gm)
         {
+            foreach (var f in s_HostTimers) if (f != null) f.SetValue(gm, 0f);
+            gm.policemanDay = false;
             if (!s_HaveTotal) return; // the cafe is still loading; the host's first total starts the sync
             float d = gm.money - s_Expected;
             if (Mathf.Abs(d) < 0.0005f) return;
@@ -143,6 +155,7 @@ namespace ICS2iOS
                 }
                 case Msg.Clock when CoopSession.IsClient:
                     ApplyClock(gm, r.GetInt(), r.GetInt(), r.GetInt(), r.GetFloat());
+                    ApplyWeather(r.GetString());
                     break;
             }
         }
@@ -160,6 +173,23 @@ namespace ICS2iOS
             if (diff < -12f) diff += 24f;
             if (Mathf.Abs(diff) > 0.25f) e.SetInternalTimeOfDay(hour);
             else e.internalHour = Mathf.Repeat(e.internalHour + diff * 0.5f, 24f);
+        }
+
+        static string WeatherName(EnviroSky e)
+        {
+            var p = e.Weather?.currentActiveWeatherPreset;
+            return p != null ? p.Name : "";
+        }
+
+        /// The host's weather (a guest's Enviro stops picking its own).
+        static void ApplyWeather(string name)
+        {
+            var e = EnviroSky.instance;
+            if (e == null || e.Weather == null || string.IsNullOrEmpty(name)) return;
+            e.Weather.updateWeather = false;
+            if (WeatherName(e) == name) return;
+            Log.Info($"coop: weather now {name} (host)");
+            e.ChangeWeather(name);
         }
 
         static void ShowChange(GameManager gm, float d)

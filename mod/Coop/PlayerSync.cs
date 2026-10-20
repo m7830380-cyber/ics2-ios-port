@@ -9,6 +9,9 @@ namespace ICS2iOS
     // Remote players on screen. Each side sends its own body 20 times a second; every remote player is shown
     // as a puppet: a copy of one of the cafe's customer characters with its AI, navigation, physics and UI
     // removed, moved by snapshot interpolation (rendered 100 ms in the past) and animated walk / run / idle.
+    // Poses: someone at a PC (their camera zooms into the screen; the others see them sitting on the chair),
+    // on the strip club couch or at the blackjack table sits there, someone in bed lies down, punches show.
+    // Remote players also open the cafe's sliding doors on each device (the doors only react to local bodies).
     public class PlayerSync : MonoBehaviour
     {
         const float SendInterval = 0.05f;
@@ -26,10 +29,17 @@ namespace ICS2iOS
             public Vector3 LastPos;
             public float Speed;
             public PlayerState Latest;
+            public byte Pose;
+            public byte Punches;
+            public bool PunchesKnown;
+            public float FightUntil;
         }
 
         static readonly Dictionary<int, Puppet> s_Puppets = new Dictionary<int, Puppet>();
-        float m_NextSend;
+        float m_NextSend, m_NextDoors;
+        static byte s_Punches;
+        static bool s_LastPunchReady = true;
+        static System.Reflection.FieldInfo s_PunchField;
 
         void OnEnable()
         {
@@ -89,7 +99,100 @@ namespace ICS2iOS
                 m_NextSend = Time.unscaledTime + SendInterval;
                 SendLocal(gm);
             }
+            CountPunches(gm.playerRay);
             foreach (var p in s_Puppets.Values) Animate(p);
+            if (Time.unscaledTime >= m_NextDoors) { m_NextDoors = Time.unscaledTime + 0.2f; OpenSlidingDoors(); }
+        }
+
+        /// PlayerRay._punch goes false while a punch (or the middle finger) plays.
+        static void CountPunches(PlayerRay ray)
+        {
+            if (ray == null) return;
+            if (s_PunchField == null) s_PunchField = typeof(PlayerRay).GetField("_punch", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (s_PunchField == null) return;
+            bool ready = (bool)s_PunchField.GetValue(ray);
+            if (s_LastPunchReady && !ready) s_Punches++;
+            s_LastPunchReady = ready;
+        }
+
+        /// What the local body is doing, and where its seat is.
+        static byte LocalPose(GameManager gm, out Vector3 seat, out float seatYaw)
+        {
+            seat = Vector3.zero; seatYaw = 0f;
+            var ray = gm.playerRay;
+            if (ray == null) return PlayerPoses.Stand;
+            float feet = gm.player.position.y + FeetOffset();
+            var pc = ray.currentPlayerComputer;
+            if (pc != null && pc.enterPc && pc.chairPos != null && pc.lookPos != null)
+            {
+                var look = pc.lookPos.position - pc.chairPos.position; look.y = 0f;
+                seat = new Vector3(pc.chairPos.position.x, feet, pc.chairPos.position.z);
+                seatYaw = look.sqrMagnitude > 1e-4f ? Quaternion.LookRotation(look).eulerAngles.y : pc.chairPos.eulerAngles.y;
+                return PlayerPoses.Sit;
+            }
+            foreach (var cam in new[] { ray.stripClubSitCameraParent, ray.blackjackSitCameraParent })
+                if (cam != null && cam.activeInHierarchy)
+                {
+                    seat = new Vector3(cam.transform.position.x, feet, cam.transform.position.z);
+                    seatYaw = cam.transform.eulerAngles.y;
+                    return PlayerPoses.Sit;
+                }
+            if (ray.sleepingObj != null && ray.sleepingObj.activeSelf)
+            {
+                seat = new Vector3(gm.player.position.x, feet, gm.player.position.z);
+                seatYaw = gm.player.eulerAngles.y;
+                return PlayerPoses.Sleep;
+            }
+            return PlayerPoses.Stand;
+        }
+
+        /// The cafe's automatic doors open for bodies that walk into them on this device (PlayerRay, Civil ...);
+        /// remote players are puppets without those scripts, so they are checked here.
+        static autoDoorSlide[] s_Doors;
+        static System.Reflection.FieldInfo s_DoorOpen, s_DoorCloseTime, s_DoorDuration, s_DoorInZone;
+        static readonly HashSet<autoDoorSlide> s_OpenedByPuppet = new HashSet<autoDoorSlide>();
+
+        static void OpenSlidingDoors()
+        {
+            if (s_Puppets.Count == 0) return;
+            if (s_Doors == null || (s_Doors.Length > 0 && s_Doors[0] == null))
+            {
+                s_Doors = FindObjectsOfType<autoDoorSlide>();
+                var t = typeof(autoDoorSlide);
+                const System.Reflection.BindingFlags all = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                s_DoorOpen = t.GetField("openDoors", all);
+                s_DoorCloseTime = t.GetField("doorCloseTime", all);
+                s_DoorDuration = t.GetField("doorOpenDuration", all);
+                s_DoorInZone = t.GetField("objectsInTriggerZone", all);
+            }
+            if (s_DoorOpen == null) return;
+            foreach (var door in s_Doors)
+            {
+                if (door == null) continue;
+                var zone = door.GetComponent<Collider>();
+                if (zone == null) continue;
+                var b = zone.bounds;
+                b.Expand(new Vector3(0.6f, 2f, 0.6f));
+                bool inside = false;
+                foreach (var p in s_Puppets.Values)
+                    if (p.Body != null && b.Contains(p.Body.transform.position + Vector3.up)) { inside = true; break; }
+                if (inside)
+                {
+                    s_OpenedByPuppet.Add(door);
+                    s_DoorOpen.SetValue(door, true);
+                }
+                else if (s_OpenedByPuppet.Remove(door))
+                {
+                    // let it close unless a local body is still in it
+                    var list = s_DoorInZone?.GetValue(door) as System.Collections.ICollection;
+                    if (list == null || list.Count == 0)
+                    {
+                        s_DoorOpen.SetValue(door, false);
+                        if (s_DoorCloseTime != null && s_DoorDuration != null)
+                            s_DoorCloseTime.SetValue(door, Time.time + (float)s_DoorDuration.GetValue(door));
+                    }
+                }
+            }
         }
 
         static void SendLocal(GameManager gm)
@@ -105,12 +208,15 @@ namespace ICS2iOS
             var ray = gm.playerRay;
             if (ray != null && ray.freezed) flags |= PlayerFlags.Frozen;
             if (ray != null && ray.currentPlayerComputer != null && ray.currentPlayerComputer.enterPc) flags |= PlayerFlags.AtComputer;
+            byte pose = LocalPose(gm, out var seat, out float seatYaw);
             var s = new PlayerState
             {
                 Player = CoopSession.Net.LocalId,
                 Time = Time.unscaledTime,
                 X = t.position.x, Y = t.position.y, Z = t.position.z,
                 Yaw = t.eulerAngles.y, Pitch = pitch, Flags = flags,
+                Pose = pose, SeatX = seat.x, SeatY = seat.y, SeatZ = seat.z, SeatYaw = seatYaw,
+                Punches = s_Punches,
             };
             var w = CoopSession.Net.Begin(Msg.PlayerState);
             s.Write(w);
@@ -130,18 +236,49 @@ namespace ICS2iOS
             float yaw = Mathf.LerpAngle(a.Yaw, b.Yaw, k);
 
             var tr = p.Body.transform;
-            tr.position = pos + Vector3.up * FeetOffset();
-            tr.rotation = Quaternion.Euler(0f, yaw, 0f);
-
-            float dt = Mathf.Max(Time.unscaledDeltaTime, 1e-4f);
-            var flat = pos - p.LastPos; flat.y = 0f;
-            p.Speed = Mathf.Lerp(p.Speed, flat.magnitude / dt, 0.2f);
-            p.LastPos = pos;
-            if (p.Anim != null && p.Anim.isActiveAndEnabled)
+            var latest = p.Latest;
+            if (latest.Pose != PlayerPoses.Stand)
             {
-                p.Anim.SetBool("walk", p.Speed > 0.3f && p.Speed <= 2.6f);
-                p.Anim.SetBool("run", p.Speed > 2.6f);
+                // sitting / lying where the seat is (the player's own body did not move there)
+                tr.position = new Vector3(latest.SeatX, latest.SeatY, latest.SeatZ);
+                tr.rotation = Quaternion.Euler(0f, latest.SeatYaw, 0f);
+                p.Speed = 0f;
+                p.LastPos = pos;
             }
+            else
+            {
+                tr.position = pos + Vector3.up * FeetOffset();
+                tr.rotation = Quaternion.Euler(0f, yaw, 0f);
+                float dt = Mathf.Max(Time.unscaledDeltaTime, 1e-4f);
+                var flat = pos - p.LastPos; flat.y = 0f;
+                p.Speed = Mathf.Lerp(p.Speed, flat.magnitude / dt, 0.2f);
+                p.LastPos = pos;
+            }
+            var anim = p.Anim;
+            if (anim == null || !anim.isActiveAndEnabled) return;
+            if (latest.Pose != p.Pose)
+            {
+                byte was = p.Pose;
+                p.Pose = latest.Pose;
+                if (was == PlayerPoses.Sleep) anim.Rebind();            // "Sleep" has no way back by itself
+                if (p.Pose == PlayerPoses.Sleep) anim.Play("Sleep", 0, 0f);
+            }
+            anim.SetBool("sitbank", p.Pose == PlayerPoses.Sit);
+            anim.SetBool("walk", p.Pose == PlayerPoses.Stand && p.Speed > 0.3f && p.Speed <= 2.6f);
+            anim.SetBool("run", p.Pose == PlayerPoses.Stand && p.Speed > 2.6f);
+            // punches: one per step of the sender's counter (fists up for a moment)
+            if (!p.PunchesKnown) { p.Punches = latest.Punches; p.PunchesKnown = true; }
+            if (latest.Punches != p.Punches)
+            {
+                p.Punches = latest.Punches;
+                if (p.Pose == PlayerPoses.Stand)
+                {
+                    anim.SetBool("fight", true);
+                    anim.SetTrigger("punch");
+                    p.FightUntil = Time.unscaledTime + 1.2f;
+                }
+            }
+            if (p.FightUntil > 0f && Time.unscaledTime > p.FightUntil) { anim.SetBool("fight", false); p.FightUntil = 0f; }
         }
 
         /// The synced position is the character controller's transform; the puppet's root is at its feet.
@@ -233,6 +370,8 @@ namespace ICS2iOS
                 sb.Append(k).Append(".visible=").Append(Visible(p.Body)).Append('\n');
                 sb.Append(k).Append(".walk=").Append(p.Anim != null && (p.Anim.GetBool("walk") || p.Anim.GetBool("run"))).Append('\n');
                 sb.Append(k).Append(".speed=").Append(p.Speed.ToString("0.00", inv)).Append('\n');
+                sb.Append(k).Append(".pose=").Append(p.Pose).Append('\n');
+                sb.Append(k).Append(".sitting=").Append(p.Anim != null && p.Anim.isActiveAndEnabled && p.Anim.GetBool("sitbank")).Append('\n');
                 var rs = p.Body.GetComponentsInChildren<Renderer>();
                 if (rs.Length > 0)
                 {

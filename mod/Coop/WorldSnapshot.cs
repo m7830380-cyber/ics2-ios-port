@@ -143,7 +143,12 @@ namespace ICS2iOS
             FBPP.GetString("language"); // reload now
         }
 
-        static bool IsLocalKey(string key) => key == "language" || key.StartsWith("option", StringComparison.Ordinal);
+        /// This device's settings (language, graphics, volume ...): the guest keeps its own.
+        static bool IsLocalKey(string key) => PrefSync.IsDeviceSetting(key);
+
+        /// The inventory is each player's own: a guest starts the session with empty pockets (taking the host's
+        /// would copy the host's things).
+        static bool IsInventory(string key) => key.StartsWith("saveslot", StringComparison.Ordinal);
 
         static void KeepLocal(Model world, Model own)
         {
@@ -156,7 +161,7 @@ namespace ICS2iOS
         static T[] Merge<T>(T[] world, T[] own, Func<T, string> key)
         {
             var list = new List<T>();
-            foreach (var x in world ?? new T[0]) if (!IsLocalKey(key(x))) list.Add(x);
+            foreach (var x in world ?? new T[0]) if (!IsLocalKey(key(x)) && !IsInventory(key(x))) list.Add(x);
             foreach (var x in own ?? new T[0]) if (IsLocalKey(key(x))) list.Add(x);
             return list.ToArray();
         }

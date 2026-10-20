@@ -81,11 +81,20 @@ namespace ICS2iOS
             if (s.name == "MainScene")
             {
                 s_InCafe = true;
+                s_CafeLoadedAt = Time.unscaledTime;
+                NetRef.ClearCache();
                 if (m_PendingRole == "host") { Host(); m_PendingRole = null; }
             }
         }
 
         static bool s_InCafe;
+        static float s_CafeLoadedAt;
+
+        /// The shared world is up on this device: the cafe has loaded (and, on a guest, matched the host's
+        /// items). Calls the game makes while loading (elevators and lights setting themselves up) are not
+        /// mirrored.
+        public static bool WorldReady =>
+            Active && s_InCafe && GameManager.Instance != null && Time.unscaledTime > s_CafeLoadedAt + 3f && (IsHost || ItemSync.Ready);
 
         public static void Host() { if (Net.StartHost()) DebugOverlay.Toast("Co-op: hosting"); }
 

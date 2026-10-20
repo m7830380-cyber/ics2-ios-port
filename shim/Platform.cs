@@ -74,6 +74,34 @@ namespace ICS2Shim
         /// True while a co-op session runs (set by the co-op mod).
         public static bool CoopActive { get; set; }
 
+        /// Co-op: a patched game method was called (doors, elevators, room purchases, NPC hits ...). The mod
+        /// mirrors it on the other devices, or sends it to the host instead of running it here. Returns true
+        /// when the method must not run locally. The patched game checks CoopActive first (no allocation
+        /// outside a session).
+        public static Func<object, string, object[], bool> CallHandler;
+        public static bool Call(object self, string action, object[] args) => CallHandler != null && CallHandler(self, action, args);
+
+        /// How many hooked methods are running on the stack (the patched methods call CallEnter / CallExit
+        /// around their body). A hooked method called from inside another one that is already mirrored on the
+        /// other devices (CoveredDepth) is not sent again: the outer call's replay does it there.
+        public static int CallDepth;
+        public static int CoveredDepth = -1;
+        public static bool Covered => CoveredDepth >= 0 && CallDepth > CoveredDepth;
+        public static void CallEnter() => CallDepth++;
+        public static void CallExit()
+        {
+            if (CallDepth > 0) CallDepth--;
+            if (CallDepth <= CoveredDepth) CoveredDepth = -1;
+        }
+
+        /// Co-op: FBPP (the game's key/value store) was written: value is string / int / float / bool, or null
+        /// when the key was deleted. Called from the patched FileBasedPrefs.
+        public static Action<string, object> PrefSetHandler;
+        public static void OnPrefSet(string key, object value)
+        {
+            if (CoopActive && PrefSetHandler != null) PrefSetHandler(key, value);
+        }
+
         /// Replaces Time.timeScale writes in GameManager (pause menu, idle pause): in co-op the world keeps
         /// running for the other players, so pausing only opens the menu.
         public static void SetTimeScale(float value)
@@ -165,11 +193,16 @@ namespace ICS2Shim
         // ---- display mode: the iOS mod owns the render resolution (Settings > Render scale) ----
         // The game's resolution / fullscreen options are desktop window settings; on iOS they would shrink
         // or stretch the screen behind the mod's back, so they are ignored.
-        public static void SetResolution(int width, int height, bool fullscreen) => Ignored($"SetResolution({width}x{height})");
-        public static void SetResolution(int width, int height, bool fullscreen, int refreshRate) => Ignored($"SetResolution({width}x{height}@{refreshRate})");
-        public static void SetResolution(int width, int height, FullScreenMode mode) => Ignored($"SetResolution({width}x{height}, {mode})");
-        public static void SetFullScreen(bool value) { }
-        public static void SetFullScreenMode(FullScreenMode mode) { }
+        // On Windows (the co-op PC build) they are the game's own options and work as usual.
+        static bool Desktop => Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor;
+        public static void SetResolution(int width, int height, bool fullscreen)
+        { if (Desktop) Screen.SetResolution(width, height, fullscreen); else Ignored($"SetResolution({width}x{height})"); }
+        public static void SetResolution(int width, int height, bool fullscreen, int refreshRate)
+        { if (Desktop) Screen.SetResolution(width, height, fullscreen, refreshRate); else Ignored($"SetResolution({width}x{height}@{refreshRate})"); }
+        public static void SetResolution(int width, int height, FullScreenMode mode)
+        { if (Desktop) Screen.SetResolution(width, height, mode); else Ignored($"SetResolution({width}x{height}, {mode})"); }
+        public static void SetFullScreen(bool value) { if (Desktop) Screen.fullScreen = value; }
+        public static void SetFullScreenMode(FullScreenMode mode) { if (Desktop) Screen.fullScreenMode = mode; }
 
         static void Ignored(string what) => Debug.Log("[ICS2-iOS] game requested Screen." + what + " - ignored on iOS");
 

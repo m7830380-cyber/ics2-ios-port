@@ -115,7 +115,7 @@ namespace ICS2iOS
         // ---- actions ---------------------------------------------------------------------------------------
         static void JoinAddress(string address)
         {
-            if (!IPAddress.TryParse(address, out _)) { s_Status = "That is not an address like 192.168.1.20"; return; }
+            if (!IPAddress.TryParse(address, out _)) { s_Status = "That is not an address like 192.168.1.20 or 26.12.34.56"; return; }
             CoopSession.Net.LocalName = PlayerName;
             CoopSession.Join(address);
             s_Status = "Joining " + address + " ...";
@@ -133,8 +133,11 @@ namespace ICS2iOS
 
             if (CoopSession.IsHost)
             {
-                var ip = CoopNet.LocalIPv4();
-                s_Lines.Add("You are hosting. Your address: " + (ip != null ? ip.ToString() : "unknown (are you on Wi-Fi?)"));
+                var addresses = CoopNet.LocalAddresses();
+                if (addresses.Count == 0) s_Lines.Add("You are hosting. Your address: unknown (are you on Wi-Fi?)");
+                else s_Lines.Add("You are hosting. Your address: " + string.Join("   ", addresses.ConvertAll(a => a.ToString())));
+                if (addresses.Exists(a => a.Label == "Radmin VPN"))
+                    s_Lines.Add("Radmin VPN friends: join your Radmin network, then Co-op > Join by your 26.x address.");
                 s_Lines.Add("Players: " + PlayerList());
                 s_Lines.Add("Friends: main menu > Co-op > tap your game, or Join by address.");
                 s_Buttons.Add(new Btn { Label = "Stop hosting", OnTap = () => CoopSession.Leave() });
@@ -147,7 +150,7 @@ namespace ICS2iOS
             }
             else if (inCafe)
             {
-                s_Lines.Add("Let friends on the same Wi-Fi join this cafe.");
+                s_Lines.Add("Let friends on the same Wi-Fi or Radmin VPN network join this cafe.");
                 s_Buttons.Add(new Btn { Label = "Host this cafe", Primary = true, OnTap = () => { net.LocalName = PlayerName; CoopSession.Host(); } });
             }
             else if (inMenu)
@@ -167,7 +170,7 @@ namespace ICS2iOS
                     s_Buttons.Add(new Btn { Label = "Join " + kv.Value.name + "  (" + addr + ")", Primary = true, OnTap = () => JoinAddress(addr) });
                     n++;
                 }
-                s_Lines.Add(n == 0 ? "Looking for games on your Wi-Fi ..." : "Games on your Wi-Fi:");
+                s_Lines.Add(n == 0 ? "Looking for games on your Wi-Fi / Radmin VPN ..." : "Games found:");
             }
             if (!string.IsNullOrEmpty(s_Status)) s_Lines.Add(s_Status);
         }
@@ -248,7 +251,7 @@ namespace ICS2iOS
             Fill(new Rect(0, 0, w, h), new Color(0.02f, 0.02f, 0.04f, 0.92f));
             var safe = Safe;
             float x = safe.xMin + safe.width * 0.04f, cw = safe.width * 0.92f;
-            GUI.Label(new Rect(x, s_Close.y, s_Close.x - x, s_Close.height), "Co-op (same Wi-Fi)", m_Title);
+            GUI.Label(new Rect(x, s_Close.y, s_Close.x - x, s_Close.height), "Co-op (Wi-Fi / Radmin VPN)", m_Title);
             Fill(s_Close, new Color(0.3f, 0.6f, 1f, 0.9f));
             GUI.Label(s_Close, "Close", m_Center);
             foreach (var b in s_Buttons)
@@ -264,8 +267,8 @@ namespace ICS2iOS
                 ty += lh + h * 0.01f;
             }
             GUI.Label(new Rect(tx, Mathf.Max(ty + h * 0.02f, h * 0.7f), cw * 0.46f, h * 0.28f),
-                "Both phones must be on the same Wi-Fi. The first time, iOS asks to allow \"Local Network\": allow it. " +
-                "Money is shared; each player has their own character and screen. The host's cafe is saved on the host.", m_Small);
+                "Play on the same Wi-Fi, or (PC) the same Radmin VPN network. iPhone: allow \"Local Network\" when iOS asks. " +
+                "The whole cafe is shared; each player has their own character and camera. The host's cafe is saved on the host.", m_Small);
         }
 
         static void Fill(Rect r, Color c)

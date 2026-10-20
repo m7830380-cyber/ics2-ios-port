@@ -71,7 +71,7 @@ namespace ICS2iOS
                 Input.simulateMouseWithTouches = false;
                 Input.multiTouchEnabled = true;
                 TouchSim.Init();
-                VInput.Virtual = OnDevice || Input.touchSupported || TouchSim.Enabled;
+                VInput.Virtual = OnDevice || TouchSim.Enabled;   // Windows: keyboard, mouse and controllers
                 Screen.sleepTimeout = SleepTimeout.NeverSleep;
                 Platform.ApplyFrameRate();
                 Log.Info($"virtual input={VInput.Virtual} targetFrameRate={Application.targetFrameRate}");
@@ -89,7 +89,12 @@ namespace ICS2iOS
                 go.AddComponent<WorldSync>();
                 go.AddComponent<ItemSync>();
                 go.AddComponent<CustomerSync>();
+                go.AddComponent<CallSync>();
+                go.AddComponent<PrefSync>();
+                go.AddComponent<ActorSync>();
+                go.AddComponent<StateWatch>();
                 go.AddComponent<CoopPanel>();
+                go.AddComponent<SkyGuard>();
                 IosGraphics.Init();
 
                 SteamOffline.AchievementUnlocked += name => DebugOverlay.Toast("Achievement unlocked");
