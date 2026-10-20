@@ -71,6 +71,17 @@ namespace ICS2Shim
         public static Func<object, string, int, bool> ForwardHandler;
         public static bool Forward(object self, string action, int arg) => ForwardHandler != null && ForwardHandler(self, action, arg);
 
+        /// True while a co-op session runs (set by the co-op mod).
+        public static bool CoopActive { get; set; }
+
+        /// Replaces Time.timeScale writes in GameManager (pause menu, idle pause): in co-op the world keeps
+        /// running for the other players, so pausing only opens the menu.
+        public static void SetTimeScale(float value)
+        {
+            if (CoopActive && value < 0.01f) return;
+            Time.timeScale = value;
+        }
+
         /// Host: CafeSoftManager.GenerateNotification was called (a customer asks to use a PC).
         public static Action<object, string, float, int, string> NotificationGenerated;
         public static void OnGenerateNotification(object table, string pcName, float timer, int extraTime, string message)

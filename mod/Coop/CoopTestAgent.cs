@@ -171,6 +171,13 @@ namespace ICS2iOS
                     if (found == 0) Log.Warn("test: approve: no open request");
                     break;
                 }
+                case "screenshot":
+                    // the game's own capture of its window (nothing outside the game can be in it)
+                    CoopSession.Instance.StartCoroutine(Screenshot(arg));
+                    break;
+                case "panel":
+                    CoopPanel.Open = arg != "close";
+                    break;
                 case "dailychanges":
                     GameManager.Instance.DailyChanges();
                     break;
@@ -229,6 +236,16 @@ namespace ICS2iOS
             {
                 Object.Destroy(go);
             }
+        }
+
+        static System.Collections.IEnumerator Screenshot(string file)
+        {
+            yield return new WaitForEndOfFrame();
+            var tex = ScreenCapture.CaptureScreenshotAsTexture();
+            string path = System.IO.Path.Combine(ICS2Shim.Platform.PersistentDataPath, System.IO.Path.GetFileName(file));
+            System.IO.File.WriteAllBytes(path, tex.EncodeToPNG());
+            Object.Destroy(tex);
+            Log.Info("test: screenshot saved to " + path);
         }
 
         static System.Collections.Generic.IEnumerable<string> Names(ICS2Coop.CoopNet net)

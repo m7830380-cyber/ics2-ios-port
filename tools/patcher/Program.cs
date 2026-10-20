@@ -381,6 +381,20 @@ static class Program
         })
             n += GuardGuest(c, mod.GetType(type), method);
 
+        // --- co-op: the pause menu / idle pause must not stop the shared world -------------------------
+        {
+            var setScale = c.ShimMethod("Platform", "SetTimeScale", "System.Single");
+            int hits = 0;
+            foreach (var m in mod.GetType("GameManager").Methods)
+                if (m.HasBody)
+                    foreach (var ins in m.Body.Instructions)
+                        if (ins.OpCode == OpCodes.Call && ins.Operand is MethodReference mr &&
+                            mr.DeclaringType.FullName == "UnityEngine.Time" && mr.Name == "set_timeScale")
+                        { ins.Operand = setScale; hits++; }
+            if (hits == 0) c.Fail("GameManager: no Time.timeScale writes found");
+            n += hits;
+        }
+
         // --- co-op: guest actions on the host's customers go to the host --------------------------------
         foreach (var (type, method) in new[]
         {

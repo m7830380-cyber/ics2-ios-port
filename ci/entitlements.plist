@@ -10,5 +10,8 @@
 	<true/>
 	<key>com.apple.developer.kernel.extended-virtual-addressing</key>
 	<true/>
+	<!-- LAN co-op: broadcast discovery of games on the Wi-Fi (direct IP and a unicast sweep work without it) -->
+	<key>com.apple.developer.networking.multicast</key>
+	<true/>
 </dict>
 </plist>

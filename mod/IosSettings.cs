@@ -19,6 +19,8 @@ namespace ICS2iOS
         public static float RenderScale = 1f;       // 0.5 .. 1 of the native resolution
         public static int Quality = 1;              // 0 low, 1 medium, 2 high (shadows, post-processing)
         public static bool RealWeather;             // off by default: live weather would send the IP address to a weather service
+        public static string CoopName = "";         // name shown to the other players (empty: device name)
+        public static string CoopLastAddress = "";  // last address typed into "Join by address"
 
         static string Path => System.IO.Path.Combine(ICS2Shim.Platform.PersistentDataPath, "ICS2iOS-settings.txt");
 
@@ -44,6 +46,8 @@ namespace ICS2iOS
                 RenderScale = F(d, "render.scale", RenderScale, 0.5f, 1f);
                 Quality = (int)F(d, "quality", Quality, 0, 2);
                 RealWeather = B(d, "weather.real", RealWeather);
+                if (d.TryGetValue("coop.name", out var cn)) CoopName = cn;
+                if (d.TryGetValue("coop.address", out var ca)) CoopLastAddress = ca;
             }
             catch (Exception e)
             {
@@ -67,6 +71,8 @@ namespace ICS2iOS
                     "render.scale=" + RenderScale.ToString(ci),
                     "quality=" + Quality,
                     "weather.real=" + RealWeather,
+                    "coop.name=" + CoopName.Replace("\n", " "),
+                    "coop.address=" + CoopLastAddress,
                 });
             }
             catch (Exception e)

@@ -118,6 +118,65 @@ namespace ICS2Coop
             Net.SendBroadcast(m_Writer, port);
         }
 
+        /// Also asks every address of this device's /24 network directly (works where broadcasts are blocked,
+        /// e.g. without the iOS multicast entitlement).
+        public void DiscoverSweep(int port = DefaultPort)
+        {
+            var ip = LocalIPv4();
+            if (ip == null) return;
+            if (!Net.IsRunning) Net.Start();
+            var b = ip.GetAddressBytes();
+            m_Writer.Reset();
+            m_Writer.Put(DiscoverAsk);
+            for (int i = 1; i < 255; i++)
+            {
+                if (i == b[3]) continue;
+                Net.SendUnconnectedMessage(m_Writer, new IPEndPoint(new IPAddress(new byte[] { b[0], b[1], b[2], (byte)i }), port));
+            }
+        }
+
+        /// This device's address on the local network (Wi-Fi), or null. Nothing is sent to find it.
+        public static IPAddress LocalIPv4()
+        {
+            IPAddress best = null;
+            try
+            {
+                foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up &&
+                        ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Unknown) continue;
+                    foreach (var ua in ni.GetIPProperties().UnicastAddresses)
+                    {
+                        var a = ua.Address;
+                        if (a.AddressFamily != AddressFamily.InterNetwork || !IsPrivate(a)) continue;
+                        // Wi-Fi / Ethernet ("en0", "Ethernet", "Wi-Fi") before anything else (VPNs, hotspots)
+                        if (best == null || ni.Name.StartsWith("en", StringComparison.OrdinalIgnoreCase) ||
+                            ni.Name.IndexOf("Wi", StringComparison.OrdinalIgnoreCase) >= 0) best = a;
+                    }
+                }
+            }
+            catch (Exception) { }
+            if (best != null) return best;
+            try
+            {
+                // a UDP "connect" only picks the outgoing interface; no packet leaves the device
+                using (var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp))
+                {
+                    s.Connect(new IPAddress(new byte[] { 10, 255, 255, 254 }), 9);
+                    var a = ((IPEndPoint)s.LocalEndPoint).Address;
+                    if (IsPrivate(a)) return a;
+                }
+            }
+            catch (Exception) { }
+            return null;
+        }
+
+        static bool IsPrivate(IPAddress a)
+        {
+            var b = a.GetAddressBytes();
+            return b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168);
+        }
+
         public void Stop()
         {
             if (Net.IsRunning) Net.Stop(true);

@@ -47,6 +47,18 @@ static partial class Program
                     break;
                 }
                 case "economy-host": EconomyHost(address, port, timeout); break;
+                case "panel":
+                {
+                    // pictures of the co-op panel (the game's own capture) for a look by eye
+                    ConnectWithRetry(address, port, timeout);
+                    WaitReport(r => r["game.ready"] == "True", 60, "game ready");
+                    Command("panel", "open");
+                    Thread.Sleep(1500);
+                    Command("screenshot", "panel-host.png");
+                    Thread.Sleep(1500);
+                    WaitReport(r => true, 5, "picture taken");
+                    break;
+                }
                 case "items-host": ItemsHost(address, port, timeout, Flag(args, "--mutate")); break;
                 case "customers-host": CustomersHost(address, port, timeout, Flag(args, "--mutate")); break;
                 case "customers-guest":

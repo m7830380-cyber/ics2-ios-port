@@ -86,7 +86,19 @@ namespace ICS2iOS
             var f = new Finger { Start = t.position, Last = t.position };
             s_Fingers[t.fingerId] = f;
             if (DebugOverlay.TryBeginTouch(t)) { f.Role = Role.Overlay; return; }
-            if (SettingsPanel.Open) { f.Role = Role.Panel; SettingsPanel.HandleTouch(t.position, TouchPhase.Began); return; }
+            if (CoopPanel.Open || SettingsPanel.Open)
+            {
+                // the panel buttons (Close, the iOS / Co-op toggles) stay reachable while a panel is open
+                var hb = TouchHud.HitTest(Gui(t.position));
+                if (hb != null && (hb == TouchHud.Gear || hb == TouchHud.Coop) && hb.Finger < 0)
+                {
+                    f.Role = Role.Button; f.Button = hb; hb.Finger = t.fingerId; hb.Press();
+                    return;
+                }
+                f.Role = Role.Panel;
+                PanelTouch(t.position, TouchPhase.Began);
+                return;
+            }
             var b = TouchHud.HitTest(Gui(t.position));
             if (b != null && b.Finger < 0)
             {
@@ -162,7 +174,7 @@ namespace ICS2iOS
                     }
                     break;
                 case Role.Panel:
-                    if (t.phase != TouchPhase.Began) SettingsPanel.HandleTouch(p, ended ? TouchPhase.Ended : TouchPhase.Moved);
+                    if (t.phase != TouchPhase.Began) PanelTouch(p, ended ? TouchPhase.Ended : TouchPhase.Moved);
                     break;
                 case Role.Scroll:
                 {
@@ -191,6 +203,12 @@ namespace ICS2iOS
                     VInput.SetMouseButton(0, false);
                     break;
             }
+        }
+
+        static void PanelTouch(Vector2 p, TouchPhase phase)
+        {
+            if (CoopPanel.Open) CoopPanel.HandleTouch(p, phase);
+            else SettingsPanel.HandleTouch(p, phase);
         }
 
         static bool AnyRole(Role r)

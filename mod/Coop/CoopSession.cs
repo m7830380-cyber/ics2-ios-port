@@ -35,7 +35,7 @@ namespace ICS2iOS
         {
             Instance = this;
             Net = new CoopNet { Log = s => Log.Info("coop: " + s) };
-            Net.LocalName = Platform.CommandLineValue("-ics2name") ?? SystemInfo.deviceName ?? "Player";
+            Net.LocalName = Platform.CommandLineValue("-ics2name") ?? CoopPanel.PlayerName;
             Net.Message += OnMessage;
             Net.PlayerJoined += (id, name) => DebugOverlay.Toast(name + " joined");
             Net.PlayerLeft += (id, name) => DebugOverlay.Toast(name + " left");
@@ -88,6 +88,14 @@ namespace ICS2iOS
         static bool s_InCafe;
 
         public static void Host() { if (Net.StartHost()) DebugOverlay.Toast("Co-op: hosting"); }
+
+        /// Main menu "Host my cafe": open the own cafe (the save, or a new game) and host once it has loaded.
+        public static void HostFromMenu()
+        {
+            if (Instance == null) return;
+            Instance.m_PendingRole = "host";
+            AutoStart();
+        }
         public static void Join(string address) { Net.Join(address); }
 
         public static void Leave()
@@ -117,6 +125,8 @@ namespace ICS2iOS
         void Update()
         {
             if (TestMode) AudioListener.volume = 0f; // the game's own volume setting would turn it back on
+            Platform.CoopActive = Active;
+            if (Active && Time.timeScale < 0.01f && s_InCafe) Time.timeScale = 1f; // paused before the session began
             try
             {
                 Net.Poll();
@@ -125,10 +135,51 @@ namespace ICS2iOS
             {
                 Log.Error("coop: network poll failed: " + e);
             }
+            if (TestMode && Time.unscaledTime >= m_NextFileReport) FileChannel();
             if (m_AutoStartAt > 0 && Time.unscaledTime >= m_AutoStartAt)
             {
                 m_AutoStartAt = -1f;
                 AutoStart();
+            }
+        }
+
+        float m_NextFileReport;
+
+        /// Test copies with two real games: the runner cannot reach every game over the network, so each game
+        /// writes its report to <profile>/report.txt (details from report-detail.txt) once a second and runs
+        /// the lines of commands.txt ("command arg"), which it then deletes.
+        void FileChannel()
+        {
+            m_NextFileReport = Time.unscaledTime + 1f;
+            string dir = Platform.PersistentDataPath;
+            try
+            {
+                string cmds = System.IO.Path.Combine(dir, "commands.txt");
+                if (System.IO.File.Exists(cmds))
+                {
+                    var lines = System.IO.File.ReadAllLines(cmds);
+                    System.IO.File.Delete(cmds);
+                    foreach (var line in lines)
+                    {
+                        if (line.Trim().Length == 0) continue;
+                        int sp = line.IndexOf(' ');
+                        CoopTestAgent.Run(-1, sp < 0 ? line.Trim() : line.Substring(0, sp), sp < 0 ? "" : line.Substring(sp + 1).Trim());
+                    }
+                }
+                string detailFile = System.IO.Path.Combine(dir, "report-detail.txt");
+                string detail = System.IO.File.Exists(detailFile) ? System.IO.File.ReadAllText(detailFile).Trim() : "";
+                var sb = new StringBuilder();
+                sb.Append("time=").Append(Time.unscaledTime.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)).Append('\n');
+                CoopTestAgent.Report(sb, detail);
+                string tmp = System.IO.Path.Combine(dir, "report.tmp");
+                System.IO.File.WriteAllText(tmp, sb.ToString());
+                string rep = System.IO.Path.Combine(dir, "report.txt");
+                if (System.IO.File.Exists(rep)) System.IO.File.Delete(rep);
+                System.IO.File.Move(tmp, rep);
+            }
+            catch (Exception e)
+            {
+                Log.Warn("test: file channel: " + e.Message);
             }
         }
 

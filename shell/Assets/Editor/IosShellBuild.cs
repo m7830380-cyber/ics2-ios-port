@@ -116,6 +116,9 @@ public static class IosShellBuild
         root.SetBoolean("UIRequiresFullScreen", true);
         root.SetBoolean("UIStatusBarHidden", true);
         root.SetBoolean("ITSAppUsesNonExemptEncryption", false);
+        // LAN co-op: iOS asks once before the app may talk to other devices on the Wi-Fi
+        root.SetString("NSLocalNetworkUsageDescription",
+            "Co-op: find and connect to a friend's game on the same Wi-Fi. Nothing is sent outside your network.");
         plist.WriteToFile(plistPath);
 
         // Unsigned build for TrollStore: strip signing requirements from the Xcode project.

@@ -80,11 +80,12 @@ namespace ICS2iOS
         public static readonly HudButton Zoom = new HudButton { Label = "Zoom\n(F)", Key = KeyCode.F, Size = 0.9f };
         public static readonly HudButton Power = new HudButton { Label = "Power", Key = KeyCode.Space, Size = 0.9f };
         public static readonly HudButton Gear = new HudButton { Label = "iOS", Size = 0.75f };
+        public static readonly HudButton Coop = new HudButton { Label = "Co-op", Size = 0.75f };
 
         public static readonly HudButton[] All =
         {
             Pause, Inventory, Map, Skills, Stats, Hide, Sprint, Hit, Use, Alt, Drop, Jump, Crouch, RotL, RotR,
-            Back, Leave, Zoom, Power, Gear,
+            Back, Leave, Zoom, Power, Gear, Coop,
         };
 
         public static float Unit { get; private set; }
@@ -93,7 +94,8 @@ namespace ICS2iOS
         static TouchHud()
         {
             Hide.OnPress = () => { IosSettings.HudHidden = !IosSettings.HudHidden; IosSettings.Save(); };
-            Gear.OnPress = () => SettingsPanel.Open = !SettingsPanel.Open;
+            Gear.OnPress = () => { SettingsPanel.Open = !SettingsPanel.Open; if (SettingsPanel.Open) CoopPanel.Open = false; };
+            Coop.OnPress = CoopPanel.Toggle;
         }
 
         /// Decides which buttons are shown and where, for the current game state.
@@ -155,9 +157,10 @@ namespace ICS2iOS
                 Back.Visible = inGame;
                 Leave.Visible = inGame && !GameState.Paused && (GameState.AtComputer || GameState.Seated);
                 Zoom.Visible = Power.Visible = inGame && !GameState.Paused && GameState.AtComputer;
-                Gear.Visible = mode == GameState.Mode.Menu || GameState.Paused;
+                Gear.Visible = Coop.Visible = mode == GameState.Mode.Menu || GameState.Paused;
                 Back.Rect = new Rect(Safe.xMin + pad, Safe.yMin + pad, u * 1.2f * Back.Size, u * 0.65f * Back.Size);
                 Gear.Rect = new Rect(Safe.xMin + pad, Safe.yMax - pad - u * 0.6f, u * 1.0f, u * 0.6f);
+                Coop.Rect = new Rect(Gear.Rect.xMax + pad, Gear.Rect.y, u * 1.3f, u * 0.6f);
                 float y = Back.Rect.yMax + pad;
                 foreach (var b in new[] { Leave, Zoom, Power })
                 {

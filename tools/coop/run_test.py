@@ -34,6 +34,7 @@ SCENARIOS = {
     'items-host-mutant': ('items-host', 'host', [], None, ['--mutate'], True),
     'items-guest': ('items-guest', 'guest', [], 'own-save', ['--fixture', FIXTURES], False),
     'customers-host': ('customers-host', 'host', [], None, [], False),
+    'panel': ('panel', 'host', [], None, [], False),
     'customers-host-mutant': ('customers-host', 'host', [], None, ['--mutate'], True),
     'customers-guest': ('customers-guest', 'guest', [], 'own-save', ['--fixture', FIXTURES], False),
     'economy-guest-mutant': ('economy-guest', 'guest', [], 'own-save', ['--fixture', FIXTURES, '--mutate'], True),
