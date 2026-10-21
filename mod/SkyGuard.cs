@@ -17,6 +17,8 @@ namespace ICS2iOS
     //     Windows build drew a wrong, screen-fixed sky);
     //   * clears each Enviro camera's texture before it draws (never old frames where the sky does not draw);
     //   * "Sky: Plain" in the iOS settings: no Enviro sky cameras; Unity's procedural sky after the lighting;
+    //   * gives the game's height fog (BOXOPHOBIC "Height Fog Global", a fog sphere around the camera) its shader
+    //     compiled natively with a tolerant sky test: the converted copy fogged the whole sky grey outdoors;
     //   * logs every camera and the sky shaders once per scene;
     //   * "FX test" button next to the FPS counter: switches the player camera's screen effects off, all at once
     //     or one at a time, to find the one that still greys the sky on iPhone.
@@ -32,12 +34,15 @@ namespace ICS2iOS
         static bool s_GuardNow;
         float m_Next;
 
-        // camera effects the FX test switches off ("Fog" is Unity's scene fog, "Sky" the Enviro sky drawing)
+        // effects the FX test switches off ("Fog" is Unity's scene fog, "Sky" the Enviro sky drawing, "HeightFog" the
+        // game's fog sphere around the camera)
         static readonly string[] s_FxNames =
         {
             "GlobalFog", "SunShafts", "MobileFrost", "ScreenDamage", "VolumetricLightRenderer", "EnviroFog",
-            "EnviroLightShafts", "PostProcessLayer", "Outliner", "Fog", "Sky",
+            "EnviroLightShafts", "PostProcessLayer", "Outliner", "Fog", "Sky", "HeightFog",
         };
+        const string HeightFogShader = "Hidden/BOXOPHOBIC/Atmospherics/Height Fog Global";
+        static MeshRenderer s_HeightFogOff;
         static int s_Fx;   // 0 all on, 1 all off, 2.. only s_FxNames[s_Fx - 2] off
         static readonly System.Collections.Generic.List<Behaviour> s_FxDisabled = new System.Collections.Generic.List<Behaviour>();
         static bool s_FogDisabled;
@@ -70,6 +75,7 @@ namespace ICS2iOS
             }
             if (FxOff("Fog") && RenderSettings.fog) { RenderSettings.fog = false; s_FogDisabled = true; }
             if (FxOff("Sky")) RemoveSky(main);
+            if (FxOff("HeightFog") && HeightFog() is MeshRenderer r && r.enabled) { r.enabled = false; s_HeightFogOff = r; }
         }
 
         static void RestoreFx()
@@ -77,6 +83,8 @@ namespace ICS2iOS
             foreach (var b in s_FxDisabled) if (b != null) b.enabled = true;
             s_FxDisabled.Clear();
             if (s_FogDisabled) { RenderSettings.fog = true; s_FogDisabled = false; }
+            if (s_HeightFogOff != null) s_HeightFogOff.enabled = true;
+            s_HeightFogOff = null;
             IosGraphics.Apply();   // post-processing back to what the quality setting says
         }
 
@@ -108,6 +116,7 @@ namespace ICS2iOS
 
             if (!s_Logged) { s_Logged = true; LogCameras(main); }
             NativeSkybox();
+            NativeHeightFog();
 
             if (IosSettings.SimpleSky) { RemoveSky(main); Simple(sky, main); return; }
             if (s_SimpleApplied) Full(sky, main);
@@ -168,6 +177,33 @@ namespace ICS2iOS
             if (native == null) return;
             box.shader = native;
             Log.Info($"sky guard: sky material '{box.name}' now uses the native procedural sky shader");
+        }
+
+        /// The fog sphere of the game's Atmospheric Height Fog (the object renames itself "Height Fog Global").
+        static MeshRenderer HeightFog()
+        {
+            var go = GameObject.Find("Height Fog Global");
+            return go != null ? go.GetComponent<MeshRenderer>() : null;
+        }
+
+        /// The height fog's own material gets the same fog compiled natively (Hidden/ICS2/HeightFogGlobal). The
+        /// converted shader counts a pixel as sky only at exactly the far-plane depth; on iPhone the whole sky
+        /// got the full distance fog (grey) instead of the game's light horizon fog.
+        static void NativeHeightFog()
+        {
+            var r = HeightFog();
+            var mat = r != null ? r.sharedMaterial : null;
+            if (mat == null || mat.shader == null || mat.shader.name != HeightFogShader) return;
+            var native = ModShader("Hidden/ICS2/HeightFogGlobal");
+            if (native == null) return;
+            int queue = mat.renderQueue;
+            mat.shader = native;
+            mat.renderQueue = queue;   // the fog script sets it again every frame anyway
+            Log.Info("sky guard: height fog now uses the native shader " +
+                     $"(intensity {Shader.GetGlobalFloat("AHF_FogIntensity"):0.##}, distance {Shader.GetGlobalFloat("AHF_FogDistanceStart"):0.#}-{Shader.GetGlobalFloat("AHF_FogDistanceEnd"):0.#} m, " +
+                     $"height {Shader.GetGlobalFloat("AHF_FogHeightStart"):0.#}-{Shader.GetGlobalFloat("AHF_FogHeightEnd"):0.#} m, " +
+                     $"sky fog {Shader.GetGlobalFloat("AHF_SkyboxFogIntensity"):0.##} height {Shader.GetGlobalFloat("AHF_SkyboxFogHeight"):0.##} fill {Shader.GetGlobalFloat("AHF_SkyboxFogFill"):0.##}, " +
+                     $"colour {Shader.GetGlobalColor("AHF_FogColorStart")})");
         }
 
         /// Enviro's sky picture (its own material: sky, background and clouds textures) into a temporary
