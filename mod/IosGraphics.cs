@@ -27,6 +27,29 @@ namespace ICS2iOS
         /// pass -iosgraphics to use the phone defaults so two games fit in memory).
         static bool Applies => Bootstrap.OnDevice || Platform.CommandLineFlag("-iosgraphics");
 
+        static readonly PostProcessLayer.Antialiasing[] s_AaModes =
+        {
+            PostProcessLayer.Antialiasing.None,
+            PostProcessLayer.Antialiasing.FastApproximateAntialiasing,
+            PostProcessLayer.Antialiasing.TemporalAntialiasing,
+        };
+
+        /// The anti-aliasing setting on every post-processing camera. The game's lighting profile sets TAA when
+        /// a scene loads, so SkyGuard calls this again every few seconds.
+        public static void EnforceAntiAliasing()
+        {
+            if (!Applies) return;
+            var mode = s_AaModes[Mathf.Clamp(IosSettings.AntiAliasing, 0, 2)];
+            foreach (var l in Resources.FindObjectsOfTypeAll<PostProcessLayer>())
+            {
+                if (l == null || !l.gameObject.scene.IsValid() || l.antialiasingMode == mode) continue;
+                Log.Info($"graphics: '{l.name}' anti-aliasing {l.antialiasingMode} -> {mode}");
+                l.antialiasingMode = mode;
+                l.stopNaNPropagation = true;
+                l.ResetHistory();
+            }
+        }
+
         public static void Apply()
         {
             if (!Applies) return;
@@ -56,6 +79,7 @@ namespace ICS2iOS
 
                 foreach (var l in Resources.FindObjectsOfTypeAll<PostProcessLayer>())
                     if (l != null && l.gameObject.scene.IsValid()) l.enabled = q > 0;
+                EnforceAntiAliasing();
                 Log.Info($"graphics: quality={q} fps={Application.targetFrameRate} shadows={QualitySettings.shadows} " +
                          $"shadowDistance={QualitySettings.shadowDistance} lod={QualitySettings.lodBias}");
             }

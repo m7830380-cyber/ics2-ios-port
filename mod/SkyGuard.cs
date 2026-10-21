@@ -10,6 +10,8 @@ namespace ICS2iOS
     // clear) and paints them behind the cafe. On Metal a render pass that is not cleared starts with whatever
     // the GPU's tile memory held: anywhere the sky is not drawn, old frames stay on screen ("out of the map"
     // smear). This:
+    //   * the smear outdoors was TAA (the post-processing anti-aliasing blends in earlier frames, and on iPhone
+    //     the open sky never lets go of them): IosGraphics keeps the anti-aliasing setting (FXAA by default);
     //   * logs every camera, the sky shaders and whether the GPU supports them (the next log tells us more);
     //   * clears each Enviro camera's texture before it draws (same picture where the sky draws, never old
     //     frames where it does not), and makes sure the player camera clears;
@@ -35,7 +37,7 @@ namespace ICS2iOS
         {
             if (!Enabled || Time.unscaledTime < m_Next) return;
             m_Next = Time.unscaledTime + 2f;
-            try { Guard(); }
+            try { IosGraphics.EnforceAntiAliasing(); Guard(); }
             catch (Exception e) { Log.Error("sky guard: " + e); m_Next = Time.unscaledTime + 30f; }
         }
 

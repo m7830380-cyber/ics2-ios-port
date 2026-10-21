@@ -21,6 +21,9 @@ namespace ICS2iOS
         // Unity's own sky instead of the Enviro sky cameras (SkyGuard); the default on iPhone, where the Enviro
         // sky left old frames in the sky
         public static bool SimpleSky = Application.platform == RuntimePlatform.IPhonePlayer;
+        // 0 off, 1 FXAA, 2 TAA (the game's own). TAA blends in earlier frames; on iPhone it never lets go of
+        // them in the open sky (grey smear outdoors), so FXAA is the default
+        public static int AntiAliasing = 1;
         public static bool RealWeather;             // off by default: live weather would send the IP address to a weather service
         public static string CoopName = "";         // name shown to the other players (empty: device name)
         public static string CoopLastAddress = "";  // last address typed into "Join by address"
@@ -48,6 +51,7 @@ namespace ICS2iOS
                 FrameRate = (int)F(d, "fps", FrameRate, 30, 60) >= 45 ? 60 : 30;
                 RenderScale = F(d, "render.scale", RenderScale, 0.5f, 1f);
                 Quality = (int)F(d, "quality", Quality, 0, 2);
+                AntiAliasing = (int)F(d, "aa", AntiAliasing, 0, 2);
                 RealWeather = B(d, "weather.real", RealWeather);
                 SimpleSky = B(d, "sky.simple", SimpleSky);
                 if (d.TryGetValue("coop.name", out var cn)) CoopName = cn;
@@ -74,6 +78,7 @@ namespace ICS2iOS
                     "fps=" + FrameRate,
                     "render.scale=" + RenderScale.ToString(ci),
                     "quality=" + Quality,
+                    "aa=" + AntiAliasing,
                     "weather.real=" + RealWeather,
                     "sky.simple=" + SimpleSky,
                     "coop.name=" + CoopName.Replace("\n", " "),
