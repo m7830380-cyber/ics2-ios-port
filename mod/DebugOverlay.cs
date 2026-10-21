@@ -8,6 +8,7 @@ namespace ICS2iOS
     {
         static bool s_ShowLog;
         static Rect s_Corner;     // pixels, origin bottom-left
+        static Rect s_Fx;         // "FX test" button left of the counter, same coordinates
         float m_Fps, m_Accum;
         int m_Frames;
         GUIStyle m_Style, m_Small;
@@ -34,6 +35,11 @@ namespace ICS2iOS
                 s_ShowLog = true;
                 return true;
             }
+            if (SkyGuard.FxAvailable && s_Fx.Contains(t.position))
+            {
+                SkyGuard.NextFxTest();
+                return true;
+            }
             return false;
         }
 
@@ -50,6 +56,7 @@ namespace ICS2iOS
             Rect safe = Screen.safeArea;
             float s = Screen.height * 0.09f;
             s_Corner = new Rect(safe.xMax - s * 2.2f, Screen.height - s, s * 2.2f, s);
+            s_Fx = new Rect(s_Corner.x - s * 5.2f, Screen.height - s * 0.8f, s * 5f, s * 0.8f);
             // the bottom of the corner zone must not cover the HUD's top button
             if (Input.GetKeyDown(KeyCode.F12)) s_ShowLog = !s_ShowLog;
         }
@@ -69,6 +76,16 @@ namespace ICS2iOS
             GUI.color = new Color(1, 1, 1, 0.75f);
             GUI.Label(r, txt, m_Style);
             GUI.color = Color.white;
+            if (SkyGuard.FxAvailable)
+            {
+                var fr = new Rect(s_Fx.x, h - s_Fx.yMax, s_Fx.width, s_Fx.height);
+                GUI.color = new Color(0, 0, 0, 0.45f);
+                GUI.DrawTexture(fr, Texture2D.whiteTexture);
+                GUI.color = new Color(1, 1, 1, 0.85f);
+                var fs = new GUIStyle(m_Style) { alignment = TextAnchor.MiddleCenter };
+                GUI.Label(fr, SkyGuard.FxLabel, fs);
+                GUI.color = Color.white;
+            }
             if (s_Toast != null && Time.unscaledTime < s_ToastUntil)
             {
                 var ts = new GUIStyle(m_Style) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(h * 0.035f) };

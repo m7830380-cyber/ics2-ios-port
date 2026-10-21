@@ -17,7 +17,9 @@ namespace ICS2iOS
     //     Windows build drew a wrong, screen-fixed sky);
     //   * clears each Enviro camera's texture before it draws (never old frames where the sky does not draw);
     //   * "Sky: Plain" in the iOS settings: no Enviro sky cameras; Unity's procedural sky after the lighting;
-    //   * logs every camera and the sky shaders once per scene.
+    //   * logs every camera and the sky shaders once per scene;
+    //   * "FX test" button next to the FPS counter: switches the player camera's screen effects off, all at once
+    //     or one at a time, to find the one that still greys the sky on iPhone.
     public class SkyGuard : MonoBehaviour
     {
         const string ClearName = "ICS2 sky clear";
@@ -27,7 +29,56 @@ namespace ICS2iOS
         static Material s_Behind;
         static readonly System.Collections.Generic.Dictionary<string, Shader> s_ModShaders = new System.Collections.Generic.Dictionary<string, Shader>();
         static bool s_SimpleApplied;
+        static bool s_GuardNow;
         float m_Next;
+
+        // camera effects the FX test switches off ("Fog" is Unity's scene fog, "Sky" the Enviro sky drawing)
+        static readonly string[] s_FxNames =
+        {
+            "GlobalFog", "SunShafts", "MobileFrost", "ScreenDamage", "VolumetricLightRenderer", "EnviroFog",
+            "EnviroLightShafts", "PostProcessLayer", "Outliner", "Fog", "Sky",
+        };
+        static int s_Fx;   // 0 all on, 1 all off, 2.. only s_FxNames[s_Fx - 2] off
+        static readonly System.Collections.Generic.List<Behaviour> s_FxDisabled = new System.Collections.Generic.List<Behaviour>();
+        static bool s_FogDisabled;
+
+        public static bool FxAvailable => Enabled && EnviroSky.instance != null && EnviroSky.instance.PlayerCamera != null;
+        public static string FxLabel => s_Fx == 0 ? "FX test" : s_Fx == 1 ? "FX: all off" : "FX off: " + s_FxNames[s_Fx - 2];
+
+        public static void NextFxTest()
+        {
+            s_Fx = (s_Fx + 1) % (s_FxNames.Length + 2);
+            RestoreFx();
+            s_GuardNow = true;
+            Log.Info("fx test: " + FxLabel);
+            DebugOverlay.Toast(FxLabel);
+        }
+
+        static bool FxOff(string name) => s_Fx == 1 || s_Fx >= 2 && s_FxNames[s_Fx - 2] == name;
+
+        /// Every frame while the FX test is on: the game and Enviro switch effects back on.
+        static void ApplyFx(Camera main)
+        {
+            if (s_Fx == 0) return;
+            foreach (var b in main.GetComponents<Behaviour>())
+            {
+                if (b == null || !b.enabled) continue;
+                string n = b.GetType().Name;
+                if (Array.IndexOf(s_FxNames, n) < 0 || !FxOff(n)) continue;
+                b.enabled = false;
+                s_FxDisabled.Add(b);
+            }
+            if (FxOff("Fog") && RenderSettings.fog) { RenderSettings.fog = false; s_FogDisabled = true; }
+            if (FxOff("Sky")) RemoveSky(main);
+        }
+
+        static void RestoreFx()
+        {
+            foreach (var b in s_FxDisabled) if (b != null) b.enabled = true;
+            s_FxDisabled.Clear();
+            if (s_FogDisabled) { RenderSettings.fog = true; s_FogDisabled = false; }
+            IosGraphics.Apply();   // post-processing back to what the quality setting says
+        }
 
         public static bool Enabled => Bootstrap.OnDevice || Array.IndexOf(Environment.GetCommandLineArgs(), "-skyguard") >= 0;
 
@@ -39,7 +90,11 @@ namespace ICS2iOS
 
         void Update()
         {
-            if (!Enabled || Time.unscaledTime < m_Next) return;
+            if (!Enabled) return;
+            try { if (s_Fx != 0 && FxAvailable) ApplyFx(EnviroSky.instance.PlayerCamera); }
+            catch (Exception e) { Log.Error("fx test: " + e); s_Fx = 0; }
+            if (Time.unscaledTime < m_Next && !s_GuardNow) return;
+            s_GuardNow = false;
             m_Next = Time.unscaledTime + 2f;
             try { IosGraphics.EnforceAntiAliasing(); Guard(); }
             catch (Exception e) { Log.Error("sky guard: " + e); m_Next = Time.unscaledTime + 30f; }
@@ -63,7 +118,7 @@ namespace ICS2iOS
                 main.clearFlags = CameraClearFlags.SolidColor;
                 main.backgroundColor = Color.black;
             }
-            DrawSkyAfterLighting(main);
+            if (!FxOff("Sky")) DrawSkyAfterLighting(main);
             foreach (var cam in Resources.FindObjectsOfTypeAll<Camera>())
             {
                 if (cam == null || cam == main || !cam.name.StartsWith("Enviro", StringComparison.Ordinal)) continue;
@@ -206,6 +261,10 @@ namespace ICS2iOS
                 sb.Append(n).Append('=').Append(ShaderState(n)).Append(' ');
             sb.Append($"fog={RenderSettings.fog} fogColor={RenderSettings.fogColor}");
             Log.Info(sb.ToString());
+            var fx = new StringBuilder($"sky: '{main.name}' components:");
+            foreach (var b in main.GetComponents<Behaviour>())
+                if (b != null) fx.Append(' ').Append(b.GetType().Name).Append(b.enabled ? "" : "(off)");
+            Log.Info(fx.ToString());
             foreach (var cam in Resources.FindObjectsOfTypeAll<Camera>())
             {
                 if (cam == null || !cam.gameObject.scene.IsValid() && cam.hideFlags == HideFlags.None) continue;
