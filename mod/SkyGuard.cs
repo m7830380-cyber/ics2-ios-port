@@ -13,6 +13,8 @@ namespace ICS2iOS
     //   * removes Enviro's early blit and draws the same Enviro picture after the lighting instead, only where
     //     the camera saw nothing (Hidden/ICS2/SkyBehind, from the shell's ics2shaders bundle): the game's own
     //     sky, clouds and time of day;
+    //   * gives the game's sky material Unity's Skybox/Procedural compiled natively (the copy converted from the
+    //     Windows build drew a wrong, screen-fixed sky);
     //   * clears each Enviro camera's texture before it draws (never old frames where the sky does not draw);
     //   * "Sky: Plain" in the iOS settings: no Enviro sky cameras; Unity's procedural sky after the lighting;
     //   * logs every camera and the sky shaders once per scene.
@@ -23,6 +25,7 @@ namespace ICS2iOS
         static bool s_Logged;
         static bool s_BundleTried;
         static Material s_Behind;
+        static readonly System.Collections.Generic.Dictionary<string, Shader> s_ModShaders = new System.Collections.Generic.Dictionary<string, Shader>();
         static bool s_SimpleApplied;
         float m_Next;
 
@@ -49,6 +52,7 @@ namespace ICS2iOS
             var main = sky.PlayerCamera;
 
             if (!s_Logged) { s_Logged = true; LogCameras(main); }
+            NativeSkybox();
 
             if (IosSettings.SimpleSky) { RemoveSky(main); Simple(sky, main); return; }
             if (s_SimpleApplied) Full(sky, main);
@@ -71,24 +75,44 @@ namespace ICS2iOS
             }
         }
 
-        /// Hidden/ICS2/SkyBehind from StreamingAssets/ics2shaders (built by the shell), or null.
+        /// A shader from StreamingAssets/ics2shaders (the mod's own, compiled for Metal by the shell), or null.
+        static Shader ModShader(string name)
+        {
+            if (!s_BundleTried)
+            {
+                s_BundleTried = true;
+                try
+                {
+                    string path = System.IO.Path.Combine(Application.streamingAssetsPath, "ics2shaders");
+                    var bundle = AssetBundle.LoadFromFile(path);
+                    if (bundle == null) Log.Warn("sky guard: no shader bundle at " + path);
+                    else foreach (var sh in bundle.LoadAllAssets<Shader>())
+                    {
+                        s_ModShaders[sh.name] = sh;
+                        Log.Info($"sky guard: mod shader {sh.name} {(sh.isSupported ? "ok" : "UNSUPPORTED")}");
+                    }
+                }
+                catch (Exception e) { Log.Error("sky guard: loading the shader bundle: " + e); }
+            }
+            return s_ModShaders.TryGetValue(name, out var s) && s.isSupported ? s : null;
+        }
+
         static Material Behind()
         {
-            if (s_BundleTried) return s_Behind;
-            s_BundleTried = true;
-            try
-            {
-                string path = System.IO.Path.Combine(Application.streamingAssetsPath, "ics2shaders");
-                var bundle = AssetBundle.LoadFromFile(path);
-                if (bundle == null) { Log.Warn("sky guard: no shader bundle at " + path); return null; }
-                Shader shader = null;
-                foreach (var s in bundle.LoadAllAssets<Shader>()) if (s.name == "Hidden/ICS2/SkyBehind") shader = s;
-                if (shader == null || !shader.isSupported) { Log.Warn($"sky guard: SkyBehind shader {(shader == null ? "missing" : "unsupported")}"); return null; }
-                s_Behind = new Material(shader) { hideFlags = HideFlags.DontSave };
-                Log.Info("sky guard: SkyBehind shader loaded");
-            }
-            catch (Exception e) { Log.Error("sky guard: loading the shader bundle: " + e); }
+            if (s_Behind == null && ModShader("Hidden/ICS2/SkyBehind") is Shader sh) s_Behind = new Material(sh) { hideFlags = HideFlags.DontSave };
             return s_Behind;
+        }
+
+        /// The game's sky material uses Unity's Skybox/Procedural; the copy converted from the Windows build draws
+        /// the sky wrongly on iPhone, so the material gets the same shader compiled natively (its settings stay).
+        static void NativeSkybox()
+        {
+            var box = RenderSettings.skybox;
+            if (box == null || box.shader == null || box.shader.name != "Skybox/Procedural") return;
+            var native = ModShader("Hidden/ICS2/SkyboxProcedural");
+            if (native == null) return;
+            box.shader = native;
+            Log.Info($"sky guard: sky material '{box.name}' now uses the native procedural sky shader");
         }
 
         /// Enviro's sky picture (its own material: sky, background and clouds textures) into a temporary
