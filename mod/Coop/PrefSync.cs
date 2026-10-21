@@ -30,7 +30,7 @@ namespace ICS2iOS
             "TextureResolution", "VSync", "Vignette", "stSSR",
         };
 
-        static readonly string[] LocalPrefixes = { "option", "saveslot", "playerstat" };
+        static readonly string[] LocalPrefixes = { "option", "saveslot", "playerstat", PlayerRecords.Prefix };
 
         /// The item save slots ("posX12" ...) and delivery box slots ("zamboxPosX3" ...).
         static readonly string[] SlotPrefixes =

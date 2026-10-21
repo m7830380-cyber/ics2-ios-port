@@ -37,7 +37,7 @@ namespace ICS2iOS
     // not sent again. Calls made inside a call that is already being replayed elsewhere are not sent again.
     public class CallSync : MonoBehaviour
     {
-        enum Rule { Mirror, Host, HostReplay, HostOnly, HostEcho, Punch, HostAlways, Hit, Door, Slot, SlotReel, SlotEnd, HostRelay }
+        enum Rule { Mirror, Host, HostReplay, HostOnly, HostEcho, Punch, HostAlways, Hit, Door, Slot, SlotReel, SlotEnd, HostRelay, Seat }
 
         static readonly Dictionary<string, Rule> Rules = new Dictionary<string, Rule>
         {
@@ -96,6 +96,7 @@ namespace ICS2iOS
             ["SecondCafeManager.BuyedCafeLightingSystem"] = Rule.Mirror, ["SecondCafeManager.BuyedCafeManager"] = Rule.Mirror,
             ["SecondCafeManager.ChangeWallMaterial"] = Rule.Mirror, ["SecondCafeManager.ChangeFloorMaterial"] = Rule.Mirror,
             ["SecondCafeManager.ChangeCeilingMaterial"] = Rule.Mirror,
+            ["PlayerComputer.EnterComputer"] = Rule.Seat,
         };
 
         static bool s_Replaying;          // running a call that came from another device
@@ -126,6 +127,7 @@ namespace ICS2iOS
             if (rule == Rule.HostAlways) return guest && CoopSession.WorldReady;
             if (rule == Rule.SlotReel) { SlotReel(self as SlotRoll); return false; }
             if (rule == Rule.SlotEnd) return SlotEnd(self as SlotMachineClub);
+            if (rule == Rule.Seat) return PlayerSync.BlockSeat(self as PlayerComputer);   // runs here only
             if (s_Replaying)
             {
                 // the replay itself runs. The host running a guest's call also passes on the dice rolls inside

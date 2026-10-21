@@ -11,7 +11,8 @@ namespace ICS2iOS
     // Joining: the host sends its whole world as a save (the game keeps everything in one FBPP key/value
     // store), the guest writes it into a separate session save file and loads the cafe from it. The guest's
     // own save file is never written while in a session; settings (language, graphics, volume ...) stay the
-    // guest's own.
+    // guest's own. A guest who played in this world before (the host keeps a record per device, PlayerRecords)
+    // gets back its own energy, hunger, sleep and pockets from that record, then its place once the cafe is up.
     public static class WorldSnapshot
     {
         public const string SessionSaveFile = "coop-session.save";
@@ -89,7 +90,9 @@ namespace ICS2iOS
             var model = JsonUtility.FromJson<Model>(json);
             if (model == null) { Log.Error("coop: world snapshot is not a save"); return false; }
             var own = JsonUtility.FromJson<Model>(FBPP.GetSaveFileAsJson()) ?? new Model();
-            KeepLocal(model, own);
+            var record = PlayerRecords.Find(model);
+            KeepLocal(model, own, record != null ? record.Prefs ?? new Model() : null);
+            PlayerRecords.SetPending(record);
             Platform.SaveFileName = SessionSaveFile;
             Platform.IsCoopGuest = true;
             WorldSync.ResetGuest();
@@ -150,21 +153,32 @@ namespace ICS2iOS
 
         /// The inventory is each player's own: a guest starts the session with empty pockets (taking the host's
         /// would copy the host's things).
-        static bool IsInventory(string key) => key.StartsWith("saveslot", StringComparison.Ordinal);
+        public static bool IsInventoryKey(string key) => key.StartsWith("saveslot", StringComparison.Ordinal);
 
-        static void KeepLocal(Model world, Model own)
+        /// The player's own values: the stats and pockets the host kept for this device (record), otherwise the
+        /// device's own stats and empty pockets.
+        public static bool IsPlayerKey(string key) =>
+            IsInventoryKey(key) || key.StartsWith("playerstat", StringComparison.Ordinal);
+
+        static void KeepLocal(Model world, Model own, Model record)
         {
-            world.StringData = Merge(world.StringData, own.StringData, x => x.Key);
-            world.IntData = Merge(world.IntData, own.IntData, x => x.Key);
-            world.FloatData = Merge(world.FloatData, own.FloatData, x => x.Key);
-            world.BoolData = Merge(world.BoolData, own.BoolData, x => x.Key);
+            world.StringData = Merge(world.StringData, own.StringData, record?.StringData, x => x.Key);
+            world.IntData = Merge(world.IntData, own.IntData, record?.IntData, x => x.Key);
+            world.FloatData = Merge(world.FloatData, own.FloatData, record?.FloatData, x => x.Key);
+            world.BoolData = Merge(world.BoolData, own.BoolData, record?.BoolData, x => x.Key);
         }
 
-        static T[] Merge<T>(T[] world, T[] own, Func<T, string> key)
+        static T[] Merge<T>(T[] world, T[] own, T[] record, Func<T, string> key)
         {
             var list = new List<T>();
-            foreach (var x in world ?? new T[0]) if (!IsLocalKey(key(x)) && !IsInventory(key(x))) list.Add(x);
-            foreach (var x in own ?? new T[0]) if (IsLocalKey(key(x))) list.Add(x);
+            foreach (var x in world ?? new T[0]) if (!IsLocalKey(key(x)) && !IsInventoryKey(key(x))) list.Add(x);
+            if (record == null)
+                foreach (var x in own ?? new T[0]) { if (IsLocalKey(key(x))) list.Add(x); }
+            else
+            {
+                foreach (var x in own ?? new T[0]) if (PrefSync.IsDeviceSetting(key(x))) list.Add(x);
+                foreach (var x in record) if (IsPlayerKey(key(x))) list.Add(x);
+            }
             return list.ToArray();
         }
 

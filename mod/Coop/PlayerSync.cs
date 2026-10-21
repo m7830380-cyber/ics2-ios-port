@@ -14,6 +14,8 @@ namespace ICS2iOS
     // Remote players also open the cafe's sliding doors on each device (the doors only react to local bodies).
     // Someone riding an elevator is placed by their height above the car, so they ride along on every screen
     // even though each device's car is a moment ahead or behind.
+    // One player at a PC at a time: sitting down at a PC someone else is at is refused (CallSync, Rule.Seat); two
+    // who sat down at the same moment are sorted out here (the lower player id keeps the seat, the host first).
     public class PlayerSync : MonoBehaviour
     {
         const float SendInterval = 0.05f;
@@ -39,7 +41,8 @@ namespace ICS2iOS
         }
 
         static readonly Dictionary<int, Puppet> s_Puppets = new Dictionary<int, Puppet>();
-        float m_NextSend, m_NextDoors;
+        static readonly Dictionary<int, PlayerState> s_LastStates = new Dictionary<int, PlayerState>();   // kept after they leave
+        float m_NextSend, m_NextDoors, m_NextSeatCheck, m_NextShow;
         static byte s_Punches;
         static bool s_LastPunchReady = true;
         static System.Reflection.FieldInfo s_PunchField;
@@ -62,7 +65,10 @@ namespace ICS2iOS
 
         void OnPlayerLeft(int id, string name) => Remove(id);
         void OnDisconnected(string reason) => OnStopped();
-        void OnStopped() { foreach (var id in new List<int>(s_Puppets.Keys)) Remove(id); }
+        void OnStopped() { foreach (var id in new List<int>(s_Puppets.Keys)) Remove(id); s_LastStates.Clear(); }
+
+        /// The last body state a player sent (also once they have left: PlayerRecords keeps where they were).
+        public static bool LastState(int player, out PlayerState s) => s_LastStates.TryGetValue(player, out s);
 
         static void Remove(int id)
         {
@@ -85,6 +91,7 @@ namespace ICS2iOS
                 CoopSession.Net.SendAll(DeliveryMethod.Sequenced, from);
             }
             if (s.Player == CoopSession.Net.LocalId) return;
+            s_LastStates[s.Player] = s;
             var p = GetPuppet(s.Player);
             if (p == null) return;
             float offset = Time.unscaledTime - s.Time;
@@ -109,6 +116,52 @@ namespace ICS2iOS
             CountPunches(gm.playerRay);
             foreach (var p in s_Puppets.Values) Animate(p);
             if (Time.unscaledTime >= m_NextDoors) { m_NextDoors = Time.unscaledTime + 0.2f; OpenSlidingDoors(); }
+            if (Time.unscaledTime >= m_NextSeatCheck) { m_NextSeatCheck = Time.unscaledTime + 0.5f; GiveUpSharedSeat(gm.playerRay); }
+            if (Time.unscaledTime >= m_NextShow)
+            {
+                m_NextShow = Time.unscaledTime + 1f;
+                foreach (var p in s_Puppets.Values) if (p.Body != null && !Visible(p.Body)) { Log.Warn($"coop: puppet {p.Player} was hidden; shown again"); Show(p.Body); }
+            }
+        }
+
+        // ---- one player per PC --------------------------------------------------------------------------
+        /// The name of the remote player sitting at this PC, or null.
+        public static string SeatTakenBy(PlayerComputer pc, int below = int.MaxValue)
+        {
+            if (pc == null || pc.chairPos == null) return null;
+            var c = pc.chairPos.position;
+            foreach (var p in s_Puppets.Values)
+            {
+                if (p.Player >= below || p.Snapshots.Count == 0 || (p.Latest.Flags & PlayerFlags.AtComputer) == 0) continue;
+                float dx = p.Latest.SeatX - c.x, dz = p.Latest.SeatZ - c.z;
+                if (dx * dx + dz * dz < 0.25f) return p.Name;
+            }
+            return null;
+        }
+
+        /// PlayerComputer.EnterComputer: true = do not sit down (someone else is at this PC).
+        public static bool BlockSeat(PlayerComputer pc)
+        {
+            string who = SeatTakenBy(pc);
+            if (who == null) return false;
+            var ray = GameManager.Instance != null ? GameManager.Instance.playerRay : null;
+            if (ray != null && ray.currentPlayerComputer == pc) ray.currentPlayerComputer = null;   // PlayerRay set it first
+            DebugOverlay.Toast(who + " is using this PC");
+            Log.Info($"coop: PC '{pc.name}' is taken by {who}");
+            return true;
+        }
+
+        /// Two players who sat down at the same PC at the same moment: the one with the higher id stands up.
+        static void GiveUpSharedSeat(PlayerRay ray)
+        {
+            var pc = ray != null ? ray.currentPlayerComputer : null;
+            if (pc == null || !pc.enterPc || !pc.enterCompleted) return;
+            string who = SeatTakenBy(pc, CoopSession.Net.LocalId);
+            if (who == null) return;
+            pc.ExitComputer();
+            ray.currentPlayerComputer = null;
+            DebugOverlay.Toast(who + " is using this PC");
+            Log.Info($"coop: {who} sat down at '{pc.name}' at the same time; standing up");
         }
 
         /// PlayerRay._punch goes false while a punch (or the middle finger) plays.
@@ -353,6 +406,7 @@ namespace ICS2iOS
             body.transform.SetParent(null, false);
             Destroy(holder);
             body.SetActive(true);
+            Show(body);
             var anim = body.GetComponentInChildren<Animator>();
             if (anim != null)
             {
@@ -361,6 +415,20 @@ namespace ICS2iOS
                 anim.cullingMode = AnimatorCullingMode.AlwaysAnimate;
             }
             return body;
+        }
+
+        /// The game's distance optimizer (FIMSpace Optimizers) switches far-away customers' renderers and LOD groups
+        /// off; a copy made while its customer was switched off stayed invisible (the optimizer is stripped from it).
+        static void Show(GameObject body)
+        {
+            foreach (var r in body.GetComponentsInChildren<Renderer>())
+            {
+                r.enabled = true;
+                r.forceRenderingOff = false;
+                if (r.shadowCastingMode == UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly) r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+                if (r is SkinnedMeshRenderer sm) sm.updateWhenOffscreen = true;
+            }
+            foreach (var lod in body.GetComponentsInChildren<LODGroup>()) lod.enabled = true;
         }
 
         public static GameObject PuppetBody(int player) => s_Puppets.TryGetValue(player, out var p) ? p.Body : null;
@@ -420,7 +488,7 @@ namespace ICS2iOS
 
         static bool Visible(GameObject go)
         {
-            foreach (var r in go.GetComponentsInChildren<Renderer>()) if (r.enabled && r.gameObject.activeInHierarchy) return true;
+            foreach (var r in go.GetComponentsInChildren<Renderer>()) if (r.enabled && !r.forceRenderingOff && r.gameObject.activeInHierarchy) return true;
             return false;
         }
     }

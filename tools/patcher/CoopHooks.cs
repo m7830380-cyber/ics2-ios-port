@@ -62,6 +62,8 @@ static class CoopHooks
         "GameManager.HomeActive1", "GameManager.HomeActive2",
         "SecondCafeManager.BuyedCafeLightingSystem", "SecondCafeManager.BuyedCafeManager",
         "SecondCafeManager.ChangeWallMaterial", "SecondCafeManager.ChangeFloorMaterial", "SecondCafeManager.ChangeCeilingMaterial",
+        // one player at a PC at a time
+        "PlayerComputer.EnterComputer",
     };
 
     /// Civil.Update reads GameManager.player (the one to chase and hit when fighting) through
