@@ -18,11 +18,10 @@ namespace ICS2iOS
         public static int FrameRate = 60;           // 30 or 60
         public static float RenderScale = 1f;       // 0.5 .. 1 of the native resolution
         public static int Quality = 1;              // 0 low, 1 medium, 2 high (shadows, post-processing)
-        // Unity's own sky instead of the Enviro sky cameras (SkyGuard); the default on iPhone, where the Enviro
-        // sky left old frames in the sky
-        public static bool SimpleSky = Application.platform == RuntimePlatform.IPhonePlayer;
-        // 0 off, 1 FXAA, 2 TAA (the game's own). TAA blends in earlier frames; on iPhone it never lets go of
-        // them in the open sky (grey smear outdoors), so FXAA is the default
+        // Unity's plain procedural sky instead of the game's Enviro sky (SkyGuard draws Enviro's after the
+        // lighting on iOS, where its own pre-G-buffer blit left old frames in the sky)
+        public static bool SimpleSky;
+        // 0 off, 1 FXAA, 2 TAA (the game's own)
         public static int AntiAliasing = 1;
         public static bool RealWeather;             // off by default: live weather would send the IP address to a weather service
         public static string CoopName = "";         // name shown to the other players (empty: device name)
@@ -53,7 +52,7 @@ namespace ICS2iOS
                 Quality = (int)F(d, "quality", Quality, 0, 2);
                 AntiAliasing = (int)F(d, "aa", AntiAliasing, 0, 2);
                 RealWeather = B(d, "weather.real", RealWeather);
-                SimpleSky = B(d, "sky.simple", SimpleSky);
+                SimpleSky = B(d, "sky.plain", SimpleSky);
                 if (d.TryGetValue("coop.name", out var cn)) CoopName = cn;
                 if (d.TryGetValue("coop.address", out var ca)) CoopLastAddress = ca;
             }
@@ -80,7 +79,7 @@ namespace ICS2iOS
                     "quality=" + Quality,
                     "aa=" + AntiAliasing,
                     "weather.real=" + RealWeather,
-                    "sky.simple=" + SimpleSky,
+                    "sky.plain=" + SimpleSky,
                     "coop.name=" + CoopName.Replace("\n", " "),
                     "coop.address=" + CoopLastAddress,
                 });

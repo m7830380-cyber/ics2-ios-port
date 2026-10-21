@@ -60,7 +60,7 @@ namespace ICS2iOS
             new ChoiceRow { Label = "Frame rate", Options = new[] { "30 fps", "60 fps" }, Get = () => IosSettings.FrameRate == 30 ? 0 : 1, Set = i => IosSettings.FrameRate = i == 0 ? 30 : 60 },
             new ChoiceRow { Label = "Graphics quality", Options = new[] { "Low", "Medium", "High" }, Get = () => IosSettings.Quality, Set = i => IosSettings.Quality = i },
             new ChoiceRow { Label = "Anti-aliasing", Options = new[] { "Off", "FXAA", "TAA" }, Get = () => IosSettings.AntiAliasing, Set = i => IosSettings.AntiAliasing = i },
-            new ChoiceRow { Label = "Sky", Options = new[] { "Full", "Simple" }, Get = () => IosSettings.SimpleSky ? 1 : 0, Set = i => IosSettings.SimpleSky = i == 1 },
+            new ChoiceRow { Label = "Sky", Options = new[] { "Game (Enviro)", "Plain" }, Get = () => IosSettings.SimpleSky ? 1 : 0, Set = i => IosSettings.SimpleSky = i == 1 },
             new SliderRow { Label = "Resolution", Min = 0.5f, Max = 1f, Get = () => IosSettings.RenderScale, Set = v => IosSettings.RenderScale = Mathf.Round(v * 20f) / 20f, Fmt = v => Mathf.RoundToInt(v * 100) + "%" },
         };
 

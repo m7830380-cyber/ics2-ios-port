@@ -6,22 +6,23 @@ using UnityEngine.SceneManagement;
 
 namespace ICS2iOS
 {
-    // The Enviro sky on iPhone. Enviro renders the sky into render textures with extra cameras ("Skybox"
-    // clear) and paints them behind the cafe. On Metal a render pass that is not cleared starts with whatever
-    // the GPU's tile memory held: anywhere the sky is not drawn, old frames stay on screen ("out of the map"
-    // smear). This:
-    //   * the smear outdoors was TAA (the post-processing anti-aliasing blends in earlier frames, and on iPhone
-    //     the open sky never lets go of them): IosGraphics keeps the anti-aliasing setting (FXAA by default);
-    //   * logs every camera, the sky shaders and whether the GPU supports them (the next log tells us more);
-    //   * clears each Enviro camera's texture before it draws (same picture where the sky draws, never old
-    //     frames where it does not), and makes sure the player camera clears;
-    //   * "Sky: Simple" in the iOS settings (default on iPhone): no Enviro sky cameras at all; the camera draws
-    //     the scene's own sky (Unity's procedural sky, following the sun through the day) after the lighting,
-    //     only where nothing else was drawn. Saves two camera renders per frame too.
+    // The Enviro sky on iPhone. Enviro renders the sky and the clouds with extra cameras into textures and
+    // blits them over the player camera's target before the G-buffer pass (deferred). On Metal that early
+    // write does not survive into the lighting pass: the sky showed old frames ("out of the map" smear).
+    // This:
+    //   * removes Enviro's early blit and draws the same Enviro picture after the lighting instead, only where
+    //     the camera saw nothing (Hidden/ICS2/SkyBehind, from the shell's ics2shaders bundle): the game's own
+    //     sky, clouds and time of day;
+    //   * clears each Enviro camera's texture before it draws (never old frames where the sky does not draw);
+    //   * "Sky: Plain" in the iOS settings: no Enviro sky cameras; Unity's procedural sky after the lighting;
+    //   * logs every camera and the sky shaders once per scene.
     public class SkyGuard : MonoBehaviour
     {
         const string ClearName = "ICS2 sky clear";
+        const string SkyName = "ICS2 sky";
         static bool s_Logged;
+        static bool s_BundleTried;
+        static Material s_Behind;
         static bool s_SimpleApplied;
         float m_Next;
 
@@ -49,7 +50,7 @@ namespace ICS2iOS
 
             if (!s_Logged) { s_Logged = true; LogCameras(main); }
 
-            if (IosSettings.SimpleSky) { Simple(sky, main); return; }
+            if (IosSettings.SimpleSky) { RemoveSky(main); Simple(sky, main); return; }
             if (s_SimpleApplied) Full(sky, main);
 
             if (main.clearFlags == CameraClearFlags.Depth || main.clearFlags == CameraClearFlags.Nothing)
@@ -58,6 +59,7 @@ namespace ICS2iOS
                 main.clearFlags = CameraClearFlags.SolidColor;
                 main.backgroundColor = Color.black;
             }
+            DrawSkyAfterLighting(main);
             foreach (var cam in Resources.FindObjectsOfTypeAll<Camera>())
             {
                 if (cam == null || cam == main || !cam.name.StartsWith("Enviro", StringComparison.Ordinal)) continue;
@@ -67,6 +69,58 @@ namespace ICS2iOS
                 cam.AddCommandBuffer(CameraEvent.BeforeForwardOpaque, cb);
                 Log.Info($"sky guard: '{cam.name}' ({cam.clearFlags}) clears its texture before drawing");
             }
+        }
+
+        /// Hidden/ICS2/SkyBehind from StreamingAssets/ics2shaders (built by the shell), or null.
+        static Material Behind()
+        {
+            if (s_BundleTried) return s_Behind;
+            s_BundleTried = true;
+            try
+            {
+                string path = System.IO.Path.Combine(Application.streamingAssetsPath, "ics2shaders");
+                var bundle = AssetBundle.LoadFromFile(path);
+                if (bundle == null) { Log.Warn("sky guard: no shader bundle at " + path); return null; }
+                Shader shader = null;
+                foreach (var s in bundle.LoadAllAssets<Shader>()) if (s.name == "Hidden/ICS2/SkyBehind") shader = s;
+                if (shader == null || !shader.isSupported) { Log.Warn($"sky guard: SkyBehind shader {(shader == null ? "missing" : "unsupported")}"); return null; }
+                s_Behind = new Material(shader) { hideFlags = HideFlags.DontSave };
+                Log.Info("sky guard: SkyBehind shader loaded");
+            }
+            catch (Exception e) { Log.Error("sky guard: loading the shader bundle: " + e); }
+            return s_Behind;
+        }
+
+        /// Enviro's sky picture (its own material: sky, background and clouds textures) into a temporary
+        /// texture, then onto the camera target where the depth is at the far plane, after the lighting.
+        static void DrawSkyAfterLighting(Camera main)
+        {
+            var r = main.GetComponent<EnviroSkyRendering>();
+            var behind = Behind();
+            if (r == null || r.material == null || behind == null) return;   // Enviro's own blit stays (black source)
+
+            RemoveEnviroBuffers(main);
+            bool deferred = main.actualRenderingPath == RenderingPath.DeferredShading;
+            var evt = deferred ? CameraEvent.AfterLighting : CameraEvent.AfterForwardOpaque;
+            if (!deferred) main.depthTextureMode |= DepthTextureMode.Depth;
+            foreach (var b in main.GetCommandBuffers(evt)) if (b.name == SkyName) return;
+            RemoveSky(main);
+
+            int tmp = Shader.PropertyToID("_ICS2Sky");
+            var cb = new CommandBuffer { name = SkyName };
+            cb.GetTemporaryRT(tmp, -1, -1, 0, FilterMode.Bilinear, main.allowHDR ? RenderTextureFormat.DefaultHDR : RenderTextureFormat.Default);
+            cb.Blit(BuiltinRenderTextureType.CameraTarget, tmp, r.material);   // the sky shader ignores its source
+            cb.Blit(tmp, BuiltinRenderTextureType.CameraTarget, behind);
+            cb.ReleaseTemporaryRT(tmp);
+            main.AddCommandBuffer(evt, cb);
+            Log.Info($"sky guard: Enviro sky drawn {evt} on '{main.name}' ({main.actualRenderingPath})");
+        }
+
+        static void RemoveSky(Camera cam)
+        {
+            foreach (var evt in new[] { CameraEvent.AfterLighting, CameraEvent.AfterForwardOpaque })
+                foreach (var b in cam.GetCommandBuffers(evt))
+                    if (b.name == SkyName) cam.RemoveCommandBuffer(evt, b);
         }
 
         static bool HasClear(Camera cam)

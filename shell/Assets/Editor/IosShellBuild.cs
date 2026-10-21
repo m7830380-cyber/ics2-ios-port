@@ -73,6 +73,8 @@ public static class IosShellBuild
         // The retail game's PlayerSettings (in its globalgamemanagers) replace these at runtime anyway,
         // but the shell must agree on anything baked into the player binary.
 
+        BuildModShaders();
+
         var opts = new BuildPlayerOptions
         {
             scenes = new[] { ScenePath },
@@ -97,6 +99,22 @@ public static class IosShellBuild
             }
             EditorApplication.Exit(1);
         }
+    }
+
+    /// The mod's own shaders (Assets/ICS2/Shaders), compiled for Metal into StreamingAssets/ics2shaders. The
+    /// game's data files replace the shell's, so the mod loads them from this bundle at runtime.
+    static void BuildModShaders()
+    {
+        const string dir = "Assets/StreamingAssets";
+        Directory.CreateDirectory(dir);
+        var shaders = Directory.GetFiles("Assets/ICS2/Shaders", "*.shader");
+        for (int i = 0; i < shaders.Length; i++) shaders[i] = shaders[i].Replace('\\', '/');
+        AssetDatabase.Refresh();
+        var manifest = BuildPipeline.BuildAssetBundles(dir,
+            new[] { new AssetBundleBuild { assetBundleName = "ics2shaders", assetNames = shaders } },
+            BuildAssetBundleOptions.ChunkBasedCompression, BuildTarget.iOS);
+        Debug.Log("[IosShellBuild] mod shaders: " + string.Join(", ", shaders) + (manifest != null ? " -> " + dir + "/ics2shaders" : " FAILED"));
+        if (manifest == null) EditorApplication.Exit(1);
     }
 
     [PostProcessBuild(100)]

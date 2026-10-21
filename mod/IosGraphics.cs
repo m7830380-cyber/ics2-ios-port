@@ -46,7 +46,8 @@ namespace ICS2iOS
                 Log.Info($"graphics: '{l.name}' anti-aliasing {l.antialiasingMode} -> {mode}");
                 l.antialiasingMode = mode;
                 l.stopNaNPropagation = true;
-                l.ResetHistory();
+                // throws on a camera that has not rendered yet (nothing to reset then)
+                try { l.ResetHistory(); } catch (NullReferenceException) { }
             }
         }
 
