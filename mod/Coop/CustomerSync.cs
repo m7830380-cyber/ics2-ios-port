@@ -31,6 +31,7 @@ namespace ICS2iOS
             public float Price, Patience;
             public AnimSync.State Anim;
             public bool Sitting;
+            public byte Layer;      // the host's physics layer for the person ("Customer" near the chair: no pushing)
         }
 
         static Civil[] s_Civils;
@@ -92,6 +93,7 @@ namespace ICS2iOS
             m.Price = c.payedPrice;
             m.Patience = c.patientTimer;
             m.Sitting = c.sittedComputer;
+            m.Layer = (byte)c.gameObject.layer;
             byte props = 0;
             if (c.cigarette != null && c.cigarette.activeSelf) props |= 1;
             if (c.fiveDollar != null && c.fiveDollar.activeSelf) props |= 2;
@@ -110,7 +112,7 @@ namespace ICS2iOS
             if (a == null || a.Active != b.Active) return true;
             if (!b.Active) return false;
             if ((a.Pos - b.Pos).sqrMagnitude > 0.0004f || Mathf.Abs(Mathf.DeltaAngle(a.Yaw, b.Yaw)) > 1f) return true;
-            if (a.Enum != b.Enum || a.Props != b.Props || a.Sitting != b.Sitting || Mathf.Abs(a.Price - b.Price) > 0.01f) return true;
+            if (a.Enum != b.Enum || a.Props != b.Props || a.Sitting != b.Sitting || a.Layer != b.Layer || Mathf.Abs(a.Price - b.Price) > 0.01f) return true;
             if (Mathf.Abs(a.Patience - b.Patience) > 0.5f) return true;
             return AnimSync.Changed(a.Anim, b.Anim);
         }
@@ -138,7 +140,7 @@ namespace ICS2iOS
                 {
                     w.Put(m.Pos.x); w.Put(m.Pos.y); w.Put(m.Pos.z);
                     w.Put(m.Yaw);
-                    w.Put(m.Enum); w.Put(m.Price); w.Put(m.Patience); w.Put(m.Sitting); w.Put(m.Props);
+                    w.Put(m.Enum); w.Put(m.Price); w.Put(m.Patience); w.Put(m.Sitting); w.Put(m.Props); w.Put(m.Layer);
                     AnimSync.Write(w, m.Anim);
                 }
                 count++;
@@ -244,12 +246,18 @@ namespace ICS2iOS
                 var m = new Mirror { Active = true, HasTarget = true };
                 m.Pos = new Vector3(r.GetFloat(), r.GetFloat(), r.GetFloat());
                 m.Yaw = r.GetFloat();
-                m.Enum = r.GetByte(); m.Price = r.GetFloat(); m.Patience = r.GetFloat(); m.Sitting = r.GetBool(); m.Props = r.GetByte();
+                m.Enum = r.GetByte(); m.Price = r.GetFloat(); m.Patience = r.GetFloat(); m.Sitting = r.GetBool(); m.Props = r.GetByte(); m.Layer = r.GetByte();
                 m.Anim = AnimSync.Read(r);
                 if (c == null) continue;
                 bool wasActive = c.gameObject.activeSelf;
                 if (!wasActive) c.gameObject.SetActive(true);
-                if (!wasActive || s_Target[i] == null || (c.transform.position - m.Pos).sqrMagnitude > 9f)
+                // the host's layer first: walking into the chair on the "Default" layer, the guest's copy shoved
+                // the keyboard, mouse and monitor off the desk, and that motion went back to the host (ItemSync),
+                // so the PC was no longer ready and the customer got up again at once
+                if (c.gameObject.layer != m.Layer) c.gameObject.layer = m.Layer;
+                // sitting down / getting up is a jump on the host too (into the chair, back to the floor)
+                bool jump = s_Target[i] != null && s_Target[i].Sitting != m.Sitting;
+                if (!wasActive || jump || s_Target[i] == null || (c.transform.position - m.Pos).sqrMagnitude > 9f)
                     c.transform.SetPositionAndRotation(m.Pos, Quaternion.Euler(0f, m.Yaw, 0f));
                 s_Target[i] = m;
                 c.myEnum = (CivilEnum)m.Enum;

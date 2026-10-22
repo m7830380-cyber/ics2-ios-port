@@ -54,7 +54,7 @@ namespace ICS2Coop
     /// game: it connects players, finds hosts on the LAN and moves typed messages. The host is player 0.
     public sealed class CoopNet : INetEventListener
     {
-        public const int ProtocolVersion = 7;
+        public const int ProtocolVersion = 8;
         public const int DefaultPort = 27815;
         const string ConnectKey = "ics2coop/";
         const string DiscoverAsk = "ICS2COOP?";
